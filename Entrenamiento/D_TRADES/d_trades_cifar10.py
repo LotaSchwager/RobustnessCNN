@@ -11,12 +11,13 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from Config import Config
-from Metrics import Metrics
+import os
+from Core.Config import Config
+from Core.Metrics import Metrics
 
-from core.Dataconfig import DataConfig, make_loaders
-from core.train import run_training
-from core.eval import eval_adv_test_whitebox_pgd
+from Core.Dataconfig import DataConfig, make_loaders
+from Core.train import run_training
+from Core.eval import eval_adv_test_whitebox_pgd
 
 from Models.normalize import NormalizeLayer
 from Models.resnet import ResNet18
@@ -52,16 +53,17 @@ def main():
     )
 
     # -------------------------
-    # 2) Data (CIFAR-10)
+    # 2) Data (CIFAR-10 / CIFAR-100)
     # -------------------------
+    dataset_name = os.getenv("DATASET", "cifar10")
     data_cfg = DataConfig(
-        name="cifar10",
+        name=dataset_name,
         root="./data",
         batch_size=cfg.batch,
         test_batch_size=cfg.test_batch,
         num_workers=4,
         use_cuda=cfg.use_cuda,
-        download=True,
+        download=False, # En OCEANO no hay internet
     )
 
     train_loader, test_loader, mean, std, num_classes = make_loaders(data_cfg)
@@ -107,7 +109,39 @@ def main():
         )
 
     # -------------------------
-    # 7) Entrenamiento principal
+    # 7.1) Modo DEBUG
+    # -------------------------
+    is_debug = os.getenv("DEBUG", "false").lower() == "true"
+    if is_debug:
+        print("[DEBUG] Ejecutando modo de prueba rápida...")
+        cfg._epochs = 2
+        # Para limitar iteraciones necesitamos modificar el loader o manejarlo en train
+        # Por ahora reducimos épocas y steps de ataque
+        cfg._num_steps = 2
+
+    # -------------------------
+    # 7.2) Lógica de Resume (Continuidad)
+    # -------------------------
+    # Buscar el último checkpoint en carpeta Temp si existe info de run previo o si queremos retomar
+    # (Por ahora manual o buscando el más reciente)
+    latest_cp = None
+    # Lógica simplificada: si hay archivos, cargar el de mayor época
+    if os.path.exists(cfg.temp_dir):
+        files = [f for f in os.listdir(cfg.temp_dir) if f.endswith(".pt")]
+        if files:
+            # Ordenar por nombre asumiendo formato runname_checkpoint_X.pt
+            files.sort(key=lambda x: int(x.split("_")[-1].split(".")[0]))
+            latest_cp = os.path.join(cfg.temp_dir, files[-1])
+            print(f"[*] Resumiendo entrenamiento desde: {latest_cp}")
+            model.load_state_dict(torch.load(latest_cp))
+            
+            # Cargar optimizador si existe .tar correspondiente
+            opt_cp = latest_cp.replace(".pt", ".tar")
+            if os.path.exists(opt_cp):
+                optimizer.load_state_dict(torch.load(opt_cp))
+
+    # -------------------------
+    # 8) Entrenamiento principal
     # -------------------------
     run_training(
         cfg=cfg,
@@ -115,7 +149,6 @@ def main():
         optimizer=optimizer,
         train_loader=train_loader,
         test_loader=test_loader,
-        d_trades_loss_fn=d_trades_loss,
         evaluator_fn=evaluator_fn,
         metrics=metrics,
         scheduler=scheduler,

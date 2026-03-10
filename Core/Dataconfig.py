@@ -15,7 +15,7 @@ class DataConfig:
     test_batch_size: int = 256
     num_workers: int = 4
     use_cuda: bool = True
-    download: bool = True
+    download: bool = False  # Por defecto False para evitar internet
 
 def dataset_stats(name: str) -> Tuple[Tuple[float,...], Tuple[float,...], int]:
     """Devuelve (mean, std, num_classes). Valores típicos de literatura."""

@@ -1,9 +1,14 @@
 from __future__ import print_function
 from dataclasses import dataclass
+import os
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from torch.autograd import Variable
+import torch.optim as optim
+import numpy as np
 from typing import Any, Callable, Dict, Optional
-from Metodo.dtrades import dtrades_loss
+from Metodo.dtrades import d_trades_loss
 
 @dataclass
 class TrainStats:
@@ -15,7 +20,6 @@ class TrainStats:
     lambda_mean: float
 
 def train_one_epoch(
-    *,
     model: nn.Module,
     device: torch.device,
     train_loader,
@@ -25,6 +29,7 @@ def train_one_epoch(
     num_steps: int,
     alpha: float,
     beta: float,
+    epoch: int,
     log_interval: int = 100,
     ) -> TrainStats:
     """
@@ -47,7 +52,7 @@ def train_one_epoch(
         optimizer.zero_grad(set_to_none=True)
 
         # calculate robust loss
-        loss, lambda_value, loss_natural, loss_robust_dynamic = dtrades_loss(model=model,
+        loss, lambda_value, loss_natural, loss_robust_dynamic = d_trades_loss(model=model,
                            x_natural=data,
                            y=target,
                            optimizer=optimizer,
@@ -84,17 +89,20 @@ def train_one_epoch(
                                             np.max(lambda_max)
                                             )
             )
-        return TrainStats(
-            loss=epoch_loss / seen,
-            natural_loss=epoch_natural_loss / seen,
-            robust_loss=epoch_robust_loss / seen,
-            lambda_min=np.min(lambda_min),
-            lambda_max=np.max(lambda_max),
-            lambda_mean=np.mean(lambda_mean),
-        )
+        
+        # Modo DEBUG: salir después de 5 batches
+        if os.getenv("DEBUG", "false").lower() == "true" and batch_idx >= 4:
+            break
+    return TrainStats(
+        loss=epoch_loss / seen,
+        natural_loss=epoch_natural_loss / seen,
+        robust_loss=epoch_robust_loss / seen,
+        lambda_min=np.min(lambda_min),
+        lambda_max=np.max(lambda_max),
+        lambda_mean=np.mean(lambda_mean),
+    )
 
 def run_training(
-    *,
     cfg,
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
@@ -109,7 +117,7 @@ def run_training(
     """
     device = cfg.device
 
-    for epoch in range(cfg.epochs):
+    for epoch in range(1, cfg.epochs + 1):
         stats = train_one_epoch(
             model=model,
             device=device,
@@ -120,20 +128,21 @@ def run_training(
             num_steps=cfg.num_steps,
             alpha=cfg.alpha,
             beta=cfg.beta,
+            epoch=epoch,
             log_interval=cfg.log_interval,
         )
 
         eval_stats = evaluator_fn(model, device, test_loader)
 
         metrics.update(
-            stats['lambda_min'],
-            stats['lambda_max'],
-            stats['lambda_mean'],
-            stats['natural_loss'],
-            stats['robust_loss'],
-            stats['loss'],
-            eval_stats['robust_acc'],
+            stats.lambda_min,
+            stats.lambda_max,
+            stats.lambda_mean,
+            stats.natural_loss,
+            stats.robust_loss,
+            stats.loss,
             eval_stats['natural_acc'],
+            eval_stats['robust_acc'],
             eval_stats['robust_drop'],
             eval_stats['attack_success_rate'],
         )
