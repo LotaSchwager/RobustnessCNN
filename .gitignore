@@ -1,3 +1,10 @@
 # Resultados
 Resultado/Modelo/*
 Resultado/Temp/*
+.env
+venv/
+*.pt
+*.tar
+.ipynb_checkpoints/
+*/__pycache__
+data/

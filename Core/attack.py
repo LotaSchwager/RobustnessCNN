@@ -1,4 +1,4 @@
-# core/attacks.py
+# Core/attack.py
 import torch
 import torch.nn.functional as F
 

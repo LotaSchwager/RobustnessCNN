@@ -1,6 +1,6 @@
-# core/eval.py
+# Core/eval.py
 import torch
-from core.attacks import pgd_linf_whitebox
+from Core.attack import pgd_linf_whitebox
 
 @torch.no_grad()
 def _count_errors(model, x, y):

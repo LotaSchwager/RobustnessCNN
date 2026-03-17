@@ -11,10 +11,10 @@ cfg = {
 
 # Clase VGG
 class VGG(nn.Module):
-    def __init__(self, vgg_name, in_channels=3):
+    def __init__(self, vgg_name, in_channels=3, num_classes=10):
         super(VGG, self).__init__()
         self.features = self._make_layers(cfg[vgg_name], in_channels)
-        self.classifier = nn.Linear(512, 10)
+        self.classifier = nn.Linear(512, num_classes)
 
 
     def forward(self, x):
