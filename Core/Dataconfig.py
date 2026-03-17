@@ -49,52 +49,6 @@ def dataset_stats(name: str) -> Tuple[Tuple[float, ...], Tuple[float, ...], int]
     raise ValueError(f"Dataset no soportado: {name}")
 
 
-def _resolve_dataset_root(base_root: str, name: str) -> str:
-    """
-    Devuelve el directorio `root` que torchvision debe recibir para cada
-    dataset, teniendo en cuenta la estructura de carpetas local.
-
-    CIFAR-10:
-        torchvision espera: {root}/cifar-10-batches-py/
-        nuestros datos   : {base}/cifar-10/cifar-10-batches-py/
-        → root = {base}/cifar-10
-
-    CIFAR-100:
-        torchvision espera: {root}/cifar-100-python/{meta,test,train}
-        nuestros datos   : {base}/cifar-100/{meta,test,train}   (sin subfolder)
-        → se crea un symlink {base}/cifar-100-python → cifar-100   (una sola vez)
-        → root = {base}
-
-    Resto de datasets: se asume que ya están bajo {base} en la forma
-    estándar de torchvision.
-    """
-    if name == "cifar10":
-        candidate = os.path.join(base_root, "cifar-10")
-        if os.path.isdir(candidate):
-            return candidate          # → {base}/cifar-10/cifar-10-batches-py/ ✓
-        # Fallback: el usuario puede haber dejado los datos directamente en base
-        return base_root
-
-    if name == "cifar100":
-        # Destino que torchvision buscará: {base}/cifar-100-python/
-        target_link = os.path.join(base_root, "cifar-100-python")
-        source_dir  = os.path.join(base_root, "cifar-100")
-
-        if not os.path.exists(target_link) and os.path.isdir(source_dir):
-            # Crea un symlink relativo: data/cifar-100-python -> cifar-100
-            # (relativo para que funcione aunque se mueva el proyecto)
-            rel_source = os.path.relpath(source_dir, base_root)
-            os.symlink(rel_source, target_link)
-            print(
-                f"[DATA] Symlink creado: {target_link} → {rel_source}  "
-                f"(requerido por torchvision CIFAR-100)"
-            )
-        return base_root              # → {base}/cifar-100-python/ ✓ (via symlink)
-
-    # mnist, fashionmnist, svhn, etc.: estructura estándar de torchvision
-    return base_root
-
-
 def make_transforms(name: str):
     """Transforms sin Normalize (Normalize se aplica dentro de NormalizeLayer)."""
     if name in ("cifar10", "cifar100"):
@@ -119,7 +73,7 @@ def make_transforms(name: str):
 
 def make_datasets(cfg: DataConfig):
     train_tf, test_tf = make_transforms(cfg.name)
-    root = _resolve_dataset_root(cfg.root, cfg.name)
+    root = cfg.root
 
     if cfg.name == "cifar10":
         train_ds = torchvision.datasets.CIFAR10(
