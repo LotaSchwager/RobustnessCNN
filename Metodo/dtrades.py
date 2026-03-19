@@ -102,8 +102,10 @@ def d_trades_loss(
 
     # Toma el algoritmo de las probabilidades adversariales
     log_probs_adv = F.log_softmax(logits_adv, dim=1)
-
-    # Pérdida de entropía cruzada estándar para los datos limpios
+    
+    probs_nat = probs_nat.clamp(min=1e-8, max=1.0)
+    log_probs_adv = log_probs_adv.clamp(min=-50, max=0)    # Pérdida de entropía cruzada estándar para los datos limpios
+    
     loss_natural = F.cross_entropy(logits_nat, y, reduction='mean')
 
     # Calcula la divergencia KL entre dos distribuciones
@@ -112,6 +114,7 @@ def d_trades_loss(
     kl_per_example = F.kl_div(
         log_probs_adv, probs_nat, reduction='none'
     ).sum(dim=1)
+     
 
     # ---------- Cálculo de entropía ----------
     # probs_nat -> probabilidad de cada clase
@@ -183,9 +186,9 @@ def d_trades_loss(
     # La pérdida adversarial dinamica que es la multiplicación de:
     # L_RD = El promedio de la sumatoria de (lambda dinamico * pérdida robusta por muestra)
     loss_robust_dynamic = (lam * kl_per_example).mean()
-
+    
     # La pérdida total ahora es tal y como se hace en TRADES
     loss_total = loss_natural + loss_robust_dynamic
-
+    
     # Retorna la pérdida total
     return loss_total, lam, loss_natural.detach(), loss_robust_dynamic.detach()

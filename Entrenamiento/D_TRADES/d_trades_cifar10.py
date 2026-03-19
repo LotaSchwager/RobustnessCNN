@@ -29,7 +29,7 @@ from Models.normalize import NormalizeLayer
 from Models import get_model
 
 from Metodo.dtrades import d_trades_loss
-from Metaheurística import LocalSearchMetaheuristic
+from Metaheuristica import LocalSearchMetaheuristic
 
 
 def main():
