@@ -20,14 +20,13 @@
 # [1] CONFIGURACIÓN DEL JOB
 #     Ajusta estos valores según tu experimento.
 # -----------------------------------------------------------------------------
-#SBATCH --job-name=dtrades_cifar10
-#SBATCH --partition=gpu
-#SBATCH --gres=gpu:1
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=4
+#SBATCH --J dtrades_cifar100
+#SBATCH -p GPU
+#SBATCH --qos=normal-gpu
+#SBATCH -n 1
+#SBATCH -c 4
 #SBATCH --mem=16G
-#SBATCH --time=48:00:00
+##SBATCH --time=48:00:00
 
 # -----------------------------------------------------------------------------
 # [2] LOGS
@@ -58,7 +57,7 @@ echo "======================================================"
 #     Usa `module avail` en el nodo de login para ver qué hay disponible.
 # -----------------------------------------------------------------------------
 module purge
-module load cuda/11.8
+module load cuda/12.6
 module load python/3.10
 
 echo "[INFO] Módulos cargados:"
@@ -104,9 +103,9 @@ echo "[INFO] GPU     : $(python -c 'import torch; print(torch.cuda.get_device_na
 #     El script Python lee estas variables con os.getenv().
 #     Modifica aquí para cambiar el experimento sin tocar el código Python.
 # -----------------------------------------------------------------------------
-export DATASET="cifar10"            # cifar10 | cifar100
+export DATASET="cifar100"            # cifar10 | cifar100
 export MODEL="resnet18"             # resnet18 | resnet50 | vgg16 | ...
-export EPOCHS=100
+export EPOCHS=10
 export BATCH_SIZE=128
 export TEST_BATCH_SIZE=256
 export LR=0.1
