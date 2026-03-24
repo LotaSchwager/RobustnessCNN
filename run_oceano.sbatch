@@ -57,8 +57,6 @@ echo "======================================================"
 #     Usa `module avail` en el nodo de login para ver qué hay disponible.
 # -----------------------------------------------------------------------------
 module purge
-module load cuda/12.6
-module load python/3.10
 
 echo "[INFO] Módulos cargados:"
 module list
@@ -74,23 +72,10 @@ mkdir -p Resultado/Temp
 echo "[INFO] Estructura de carpetas lista."
 
 # -----------------------------------------------------------------------------
-# [5] ENTORNO VIRTUAL
-#     NOTA MÁXIMA IMPORTANCIA: Los nodos GPU de OCEANO NO tienen internet.
-#     Debes crear el entorno virtual e instalar los requirements desde el
-#     nodo de login (head node) ANTES de enviar este job con sbatch.
-#     Comandos a ejecutar una sola vez en el nodo de login:
-#       python3 -m venv venv
-#       source venv/bin/activate
-#       pip install -r requirements.txt
+# [5] ENTORNO CONDA
 # -----------------------------------------------------------------------------
-if [ ! -d "venv" ]; then
-    echo "[ERROR] No se encontró el directorio 'venv'."
-    echo "[ERROR] Crea e instala las dependencias en el nodo de login primero."
-    exit 1
-else
-    echo "[INFO] Activando entorno virtual..."
-    source venv/bin/activate
-fi
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate robustness
 
 
 echo "[INFO] Python  : $(python --version)"
@@ -103,56 +88,30 @@ echo "[INFO] GPU     : $(python -c 'import torch; print(torch.cuda.get_device_na
 #     El script Python lee estas variables con os.getenv().
 #     Modifica aquí para cambiar el experimento sin tocar el código Python.
 # -----------------------------------------------------------------------------
-export DATASET="cifar100"            # cifar10 | cifar100
-export MODEL="resnet18"             # resnet18 | resnet50 | vgg16 | ...
+export DATASET="cifar10"           
+export MODEL="resnet18"             
+export METHOD="d_trades"
 export EPOCHS=10
-export BATCH_SIZE=128
-export TEST_BATCH_SIZE=256
-export LR=0.1
-export MOMENTUM=0.9
-export WEIGHT_DECAY=5e-4
-export SEED=1
-export NUM_WORKERS=4
-
-# Ataque adversarial (epsilon = 8/255, step = 2/255)
-export EPSILON=0.031372549
-export STEP_SIZE=0.007843137
-export NUM_STEPS=10
-
-# D-TRADES: valores iniciales de alpha y beta
-# (la metaheurística los optimiza durante el entrenamiento)
-export ALPHA=1.0
-export BETA=1.0
-
-# Guardado y logging
-export SAVE_FREQ=4                  # guarda checkpoint en Temp/ cada 4 épocas
-export LOG_INTERVAL=100
-
-# Metaheurística  (true: activa la optimización dinámica de alpha/beta)
-export USE_METAHEURISTIC=true
 
 # Recuperación ante caídas (Resuming)
 # Si tu job fue cancelado por límite de tiempo de SLURM, descomenta la siguiente
 # línea y pon el nombre (fecha) exacto de tu RUN para continuar desde el Temp/:
 # export RUN_ID="YYYYMMDD-HHMMSS"
 
-# En OCEANO los nodos GPU no tienen internet → NUNCA cambiar esto a true
-export DOWNLOAD=false
-export DEBUG=false
 export PYTHONPATH="$(pwd):$PYTHONPATH"
 
 echo "[INFO] Configuración del experimento:"
+echo "       Método  : $METHOD"
 echo "       Dataset : $DATASET  |  Modelo: $MODEL"
-echo "       Épocas  : $EPOCHS   |  Batch : $BATCH_SIZE"
-echo "       α₀=$ALPHA  β₀=$BETA  |  Metaheurística: $USE_METAHEURISTIC"
+echo "       Épocas  : $EPOCHS"
 
 # -----------------------------------------------------------------------------
 # [7] EJECUCIÓN
 # -----------------------------------------------------------------------------
 echo ""
-echo "[INFO] Lanzando entrenamiento D-TRADES..."
+echo "[INFO] Lanzando entrenamiento principal..."
 
-python Entrenamiento/D_TRADES/d_trades_cifar10.py
+python main.py
 
 EXIT_CODE=$?
 

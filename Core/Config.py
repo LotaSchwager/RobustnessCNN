@@ -5,163 +5,150 @@ import time
 class Config:
     def __init__(
             self, 
-            batch=128, 
-            epochs=100, 
-            weight_decay=5e-4, 
-            lr=0.1, 
-            momentum=0.9, 
-            epsilon=8/255, 
-            num_steps=10, 
-            step_size=2/255,
-            save_freq=5,
-            log_interval=100,
-            test_batch=256,
-            run_name="dtrades_run",
-            beta=1.0,
-            alpha=1.0,
+            dataset="cifar10",
+            model="resnet18",
+            method="d_trades",
+            epochs=100,
+            num_classes=10,       # resuelto desde DataConfig antes de crear Config
             seed=1,
             cuda=True,
             results_dir='./Resultado/modelo',
             temp_dir='./Resultado/Temp',
         ):
-        self._alpha = alpha
-        self._beta = beta
-        self._batch = batch
-        self._test_batch = test_batch
-        self._epochs = epochs
-        self._weight_decay = weight_decay
-        self._lr = lr
-        self._momentum = momentum
-        self._epsilon = epsilon
-        self._num_steps = num_steps
-        self._step_size = step_size
-        self._save_freq = save_freq
-        self._log_interval = log_interval
-        self._run_name = run_name
-        self._seed = seed
-        self._run_id = os.getenv("RUN_ID", time.strftime("%Y%m%d-%H%M%S"))
+        self._dataset     = dataset
+        self._model       = model
+        self._method      = method
+        self._epochs      = int(epochs)
+        self._num_classes = int(num_classes)
         
-        # Ajustar directorios relativos a la raíz si es necesario, 
-        # pero por ahora mantenemos la lógica del usuario
+        # Hiperparámetros generales de entrenamiento
+        self._batch = 128
+        self._test_batch = 256
+        self._weight_decay = 5e-4
+        self._lr = 0.1
+        self._momentum = 0.9
+        
+        if method == "d_trades":
+            self._epsilon   = 8/255 if dataset in ["cifar10", "cifar100"] else 0.3
+            self._num_steps = 10
+            self._step_size = 2/255 if dataset in ["cifar10", "cifar100"] else 0.01
+            
+            # Hiperparámetros del lambda dinámico adaptativo por clase:
+            #   alpha_base: peso base de la entropía local H(x).
+            #   beta_base : peso base de la sensibilidad local S(x).
+            #   gamma     : peso del error acumulado de clase err_c.
+            #   rho       : tasa de actualización EMA para las estadísticas por clase.
+            self._alpha_base = 1.0
+            self._beta_base  = 1.0
+            self._gamma      = 0.5
+            self._rho        = 0.1
+        else:
+            self._epsilon    = 8/255
+            self._num_steps  = 10
+            self._step_size  = 2/255
+            self._alpha_base = 1.0
+            self._beta_base  = 1.0
+            self._gamma      = 0.0
+            self._rho        = 0.1
+            
+        self._save_freq    = 3
+        self._log_interval = 100
+        self._run_name     = f"{method}_{dataset}_{model}"
+        self._seed         = seed
+        self._run_id       = os.getenv("RUN_ID", time.strftime("%Y%m%d-%H%M%S"))
+        
         self._results_dir = os.path.join(results_dir, self._run_id)
-        self._temp_dir = os.path.join(temp_dir, self._run_id)
-
-        # Crear directorios
+        self._temp_dir    = os.path.join(temp_dir,    self._run_id)
         os.makedirs(self._results_dir, exist_ok=True)
-        os.makedirs(self._temp_dir, exist_ok=True)
+        os.makedirs(self._temp_dir,    exist_ok=True)
 
-        # Configuración de CUDA
         self._use_cuda = bool(cuda) and torch.cuda.is_available()
-        self._device = torch.device("cuda" if self._use_cuda else "cpu")
-        self._kwargs = {"num_workers": 4, "pin_memory": True} if self._use_cuda else {}
+        self._device   = torch.device("cuda" if self._use_cuda else "cpu")
+        self._kwargs   = {"num_workers": 4, "pin_memory": True} if self._use_cuda else {}
 
-        # Seeds
         torch.manual_seed(self._seed)
         if self._use_cuda:
             torch.cuda.manual_seed_all(self._seed)
     
-    # Guarda los checkpoints
     def save_checkpoints(self, epoch, optimizer, model):
-        # Guarda en Temp cada multiplo de save_freq (excepto la útlima época)
+        """
+        Guarda checkpoints del modelo y optimizer.
+        
+        Durante el entrenamiento (cada save_freq épocas) los archivos van a
+        temp_dir para no acumular en results_dir. En la época final van a
+        results_dir como modelo definitivo.
+        
+        Retorna la ruta base del checkpoint guardado (sin extensión), para que
+        train.py pueda guardar el .stats correspondiente en el mismo directorio
+        y con el mismo nombre base, garantizando coherencia al restaurar.
+        """
         if epoch % self._save_freq == 0 and epoch < self._epochs:
-            torch.save(
-                model.state_dict(),
-                os.path.join(self._temp_dir, f"{self._run_name}_checkpoint_{epoch}.pt")
-            )
-            torch.save(
-                optimizer.state_dict(),
-                os.path.join(self._temp_dir, f"{self._run_name}_checkpoint_{epoch}.tar")
-            )
+            base = os.path.join(self._temp_dir, f"{self._run_name}_checkpoint_{epoch}")
+            torch.save(model.state_dict(),     base + ".pt")
+            torch.save(optimizer.state_dict(), base + ".tar")
             print(f"[CKPT] Checkpoint temporal guardado en época {epoch}.")
-        # Al finalizar el entrenamiento, guarda el modelo definitivo en Resultado/modelo
+            return base   # train.py usará esto para guardar base + ".stats"
+
         if epoch == self._epochs:
-            torch.save(
-                model.state_dict(),
-                os.path.join(self._results_dir, f"{self._run_name}_final.pt")
-            )
-            torch.save(
-                optimizer.state_dict(),
-                os.path.join(self._results_dir, f"{self._run_name}_final.tar")
-            )
+            base = os.path.join(self._results_dir, f"{self._run_name}_final")
+            torch.save(model.state_dict(),     base + ".pt")
+            torch.save(optimizer.state_dict(), base + ".tar")
             print(f"[CKPT] Modelo final guardado en: {self._results_dir}")
-    
-    @property
-    def alpha(self) -> float:
-        return self._alpha
+            return base   # train.py usará esto para guardar base + ".stats"
 
-    @alpha.setter
-    def alpha(self, value: float) -> None:
-        self._alpha = float(value)
+        return None   # épocas intermedias sin checkpoint — no hay .stats que guardar
 
     @property
-    def beta(self) -> float:
-        return self._beta
-
-    @beta.setter
-    def beta(self, value: float) -> None:
-        self._beta = float(value)
-    
+    def num_classes(self):  return self._num_classes
     @property
-    def batch(self): return self._batch
-
+    def dataset(self):     return self._dataset
     @property
-    def test_batch(self): return self._test_batch
-    
+    def model(self):       return self._model
     @property
-    def epochs(self): return self._epochs
-
-    @epochs.setter
-    def epochs(self, value: int) -> None:
-        self._epochs = int(value)
-    
+    def method(self):      return self._method
     @property
-    def weight_decay(self): return self._weight_decay
-    
+    def batch(self):       return self._batch
     @property
-    def lr(self): return self._lr
-    
+    def test_batch(self):  return self._test_batch
     @property
-    def momentum(self): return self._momentum
-    
+    def epochs(self):      return self._epochs
     @property
-    def epsilon(self): return self._epsilon
-    
+    def weight_decay(self):return self._weight_decay
     @property
-    def num_steps(self): return self._num_steps
-
-    @num_steps.setter
-    def num_steps(self, value: int) -> None:
-        self._num_steps = int(value)
-    
+    def lr(self):          return self._lr
     @property
-    def step_size(self): return self._step_size
-    
+    def momentum(self):    return self._momentum
     @property
-    def save_freq(self): return self._save_freq
-
+    def epsilon(self):     return self._epsilon
     @property
-    def log_interval(self): return self._log_interval
-    
+    def num_steps(self):   return self._num_steps
     @property
-    def run_name(self): return self._run_name
-    
+    def step_size(self):   return self._step_size
     @property
-    def seed(self): return self._seed
-    
+    def alpha_base(self):  return self._alpha_base
     @property
-    def run_id(self): return self._run_id
-    
+    def beta_base(self):   return self._beta_base
+    @property
+    def gamma(self):       return self._gamma
+    @property
+    def rho(self):         return self._rho
+    @property
+    def save_freq(self):   return self._save_freq
+    @property
+    def log_interval(self):return self._log_interval
+    @property
+    def run_name(self):    return self._run_name
+    @property
+    def seed(self):        return self._seed
+    @property
+    def run_id(self):      return self._run_id
     @property
     def results_dir(self): return self._results_dir
-    
     @property
-    def temp_dir(self): return self._temp_dir
-    
+    def temp_dir(self):    return self._temp_dir
     @property
-    def device(self): return self._device
-    
+    def device(self):      return self._device
     @property
-    def kwargs(self): return self._kwargs
-    
+    def kwargs(self):      return self._kwargs
     @property
-    def use_cuda(self): return self._use_cuda
+    def use_cuda(self):    return self._use_cuda
