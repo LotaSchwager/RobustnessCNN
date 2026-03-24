@@ -20,9 +20,9 @@
 # [1] CONFIGURACIÓN DEL JOB
 #     Ajusta estos valores según tu experimento.
 # -----------------------------------------------------------------------------
-#SBATCH --J dtrades_cifar100
+#SBATCH --J dtrades_cifar10
 #SBATCH -p GPU
-#SBATCH --qos=normal-gpu
+#SBATCH --qos=test
 #SBATCH -n 1
 #SBATCH -c 4
 #SBATCH --mem=16G
