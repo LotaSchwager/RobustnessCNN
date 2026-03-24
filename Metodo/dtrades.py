@@ -23,9 +23,11 @@ def make_state(cfg, device) -> "ClassStats":
 
 def save_state(state: "ClassStats", path: str) -> None:
     """Serializa el estado EMA a disco junto al checkpoint del modelo."""
+    stats_path = path + ".stats"
+    print(f"  -> Guardando estadisticas de clase: {stats_path}")
     torch.save(
         {"H_c": state.H_c.cpu(), "S_c": state.S_c.cpu(), "err_c": state.err_c.cpu()},
-        path + ".stats",
+        stats_path,
     )
 
 

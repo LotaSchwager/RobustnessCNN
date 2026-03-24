@@ -51,7 +51,7 @@ class Config:
             self._gamma      = 0.0
             self._rho        = 0.1
             
-        self._save_freq    = 3
+        self._save_freq    = 25
         self._log_interval = 100
         self._run_name     = f"{method}_{dataset}_{model}"
         self._seed         = seed
@@ -73,30 +73,40 @@ class Config:
     def save_checkpoints(self, epoch, optimizer, model):
         """
         Guarda checkpoints del modelo y optimizer.
-        
-        Durante el entrenamiento (cada save_freq épocas) los archivos van a
-        temp_dir para no acumular en results_dir. En la época final van a
-        results_dir como modelo definitivo.
-        
-        Retorna la ruta base del checkpoint guardado (sin extensión), para que
-        train.py pueda guardar el .stats correspondiente en el mismo directorio
-        y con el mismo nombre base, garantizando coherencia al restaurar.
         """
-        if epoch % self._save_freq == 0 and epoch < self._epochs:
-            base = os.path.join(self._temp_dir, f"{self._run_name}_checkpoint_{epoch}")
-            torch.save(model.state_dict(),     base + ".pt")
-            torch.save(optimizer.state_dict(), base + ".tar")
-            print(f"[CKPT] Checkpoint temporal guardado en época {epoch}.")
-            return base   # train.py usará esto para guardar base + ".stats"
+        # Sincronizar GPU antes de guardar para evitar estados inconsistentes
+        if self._use_cuda:
+            torch.cuda.synchronize()
 
-        if epoch == self._epochs:
-            base = os.path.join(self._results_dir, f"{self._run_name}_final")
-            torch.save(model.state_dict(),     base + ".pt")
-            torch.save(optimizer.state_dict(), base + ".tar")
-            print(f"[CKPT] Modelo final guardado en: {self._results_dir}")
-            return base   # train.py usará esto para guardar base + ".stats"
+        is_periodic = (epoch % self._save_freq == 0 and epoch < self._epochs)
+        is_final    = (epoch == self._epochs)
 
-        return None   # épocas intermedias sin checkpoint — no hay .stats que guardar
+        if is_periodic or is_final:
+            if is_periodic:
+                base = os.path.join(self._temp_dir, f"{self._run_name}_checkpoint_{epoch}")
+                msg = f"[CKPT] Guardando checkpoint periódico época {epoch}..."
+            else:
+                base = os.path.join(self._results_dir, f"{self._run_name}_final")
+                msg = f"[CKPT] Guardando modelo final..."
+
+            print(msg)
+            
+            # Sincronizar GPU antes de guardar (crucial en OCEANO/Tesla)
+            if self._use_cuda:
+                torch.cuda.synchronize()
+
+            # Guardar modelo
+            print(f"  -> Guardando weights: {base}.pt")
+            torch.save(model.state_dict(), base + ".pt")
+            
+            # Guardar optimizador
+            print(f"  -> Guardando optimizer: {base}.tar")
+            torch.save(optimizer.state_dict(), base + ".tar")
+            
+            print(f"[CKPT] Guardado completado con éxito.")
+            return base
+
+        return None
 
     @property
     def num_classes(self):  return self._num_classes
