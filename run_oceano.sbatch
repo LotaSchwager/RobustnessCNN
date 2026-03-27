@@ -24,8 +24,8 @@
 #SBATCH -p GPU
 #SBATCH --qos=normal-gpu
 #SBATCH -n 1
-#SBATCH -c 8
-#SBATCH --mem=16G
+#SBATCH -c 20
+#SBATCH --mem=48G
 ##SBATCH --time=48:00:00
 
 # -----------------------------------------------------------------------------
@@ -37,8 +37,8 @@
 #SBATCH --error=logs/%x_%j.err
 
 # Notificación por correo (descomenta y configura si quieres recibirla)
-##SBATCH --mail-type=BEGIN,END,FAIL
-##SBATCH --mail-user=tu.correo@pucv.cl
+##SBATCH --mail-type=ALL
+##SBATCH --mail-user=ademir.munoz.r@mail.pucv.cl
 
 # =============================================================================
 # INICIO
@@ -91,7 +91,7 @@ echo "[INFO] GPU     : $(python -c 'import torch; print(torch.cuda.get_device_na
 export DATASET="cifar10"           
 export MODEL="resnet18"             
 export METHOD="d_trades"
-export EPOCHS=10
+export EPOCHS=100
 
 # Recuperación ante caídas (Resuming)
 # Si tu job fue cancelado por límite de tiempo de SLURM, descomenta la siguiente

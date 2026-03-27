@@ -264,8 +264,8 @@ class ClassStats:
         # Opción B: piso garantizado en alpha_base y beta_base.
         # El (1 + ...) asegura que ninguna clase recibe peso cero,
         # independientemente de cuán baja sea su incertidumbre o sensibilidad relativa.
-        alpha_c = alpha_base * (1.0 + H_tilde)   # [num_classes], rango [alpha_base, 2*alpha_base]
-        beta_c  = beta_base  * (1.0 + S_tilde)   # [num_classes], rango [beta_base,  2*beta_base]
+        alpha_c = alpha_base * (0.5 + H_tilde)   # [num_classes], rango [alpha_base, 2*alpha_base]
+        beta_c  = beta_base  * (0.5 + S_tilde)   # [num_classes], rango [beta_base,  2*beta_base]
 
         # Asignar a cada muestra el valor de su clase correspondiente
         alpha_per_sample = alpha_c[y]   # [B]
