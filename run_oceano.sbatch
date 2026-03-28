@@ -1,16 +1,14 @@
 #!/bin/bash
 # =============================================================================
 #  SLURM job script para OCEANO-PUCV  |  Proyecto de Título
-#  Descripción: Entrenamiento CNN con D-TRADES (con metaheurística) sobre CIFAR-10/100
+#  Descripción: Evaluación de CNN con métricas de robustez (Natural, PGD, FGSM, AutoAttack)
 #
 #  Uso:
 #    sbatch run_oceano.sbatch
 #
 #  Salidas principales:
 #    logs/<nombre>_<JOBID>.log      → log completo del job
-#    Resultado/modelo/<RUN_ID>/     → pesos finales del modelo (.pt) + optimizer (.tar)
-#    Resultado/modelo/<RUN_ID>/metricas.csv  → métricas por época (loss, acc, alpha, beta…)
-#    Resultado/Temp/<RUN_ID>/       → checkpoints intermedios cada SAVE_FREQ épocas
+#    <Ruta_del_Checkpoint>/metricas_evaluacion.json  → métricas finales guardadas
 #
 #  Para recuperar los resultados desde tu PC:
 #    scp -r usuario@oceano.pucv.cl:/ruta/proyecto/Resultado/ ./Resultado/
@@ -18,15 +16,15 @@
 
 # -----------------------------------------------------------------------------
 # [1] CONFIGURACIÓN DEL JOB
-#     Ajusta estos valores según tu experimento.
+#     Ajusta estos valores según tu configuración y prioridad para la evaluación.
 # -----------------------------------------------------------------------------
-#SBATCH --J dtrades_cifar100
+#SBATCH --J eval_cnn
 #SBATCH -p GPU
 #SBATCH --qos=normal-gpu
 #SBATCH -n 1
 #SBATCH -c 4
 #SBATCH --mem=16G
-##SBATCH --time=48:00:00
+##SBATCH --time=12:00:00
 
 # -----------------------------------------------------------------------------
 # [2] LOGS
@@ -63,11 +61,9 @@ module list
 
 # -----------------------------------------------------------------------------
 # [4] ESTRUCTURA DE CARPETAS
-#     Se crean aquí para que SLURM pueda escribir los logs desde el inicio.
+#     Se crea aquí para que SLURM pueda escribir los logs desde el inicio.
 # -----------------------------------------------------------------------------
 mkdir -p logs
-mkdir -p Resultado/modelo
-mkdir -p Resultado/Temp
 
 echo "[INFO] Estructura de carpetas lista."
 
@@ -77,41 +73,37 @@ echo "[INFO] Estructura de carpetas lista."
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate robustness
 
-
 echo "[INFO] Python  : $(python --version)"
 echo "[INFO] PyTorch : $(python -c 'import torch; print(torch.__version__)')"
 echo "[INFO] CUDA OK : $(python -c 'import torch; print(torch.cuda.is_available())')"
 echo "[INFO] GPU     : $(python -c 'import torch; print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU")')"
 
 # -----------------------------------------------------------------------------
-# [6] HIPERPARÁMETROS (todos como variables de entorno)
-#     El script Python lee estas variables con os.getenv().
-#     Modifica aquí para cambiar el experimento sin tocar el código Python.
+# [6] HIPERPARÁMETROS DE EVALUACIÓN (variables de entorno)
+#     El script Python de evaluación lee estas variables para configurar el modelo
+#     y cargar los pesos desde tu CHECKPOINT_PATH.
 # -----------------------------------------------------------------------------
-export DATASET="cifar10"           
-export MODEL="resnet18"             
+export DATASET="cifar10"
+export MODEL="resnet18"
 export METHOD="d_trades"
-export EPOCHS=10
 
-# Recuperación ante caídas (Resuming)
-# Si tu job fue cancelado por límite de tiempo de SLURM, descomenta la siguiente
-# línea y pon el nombre (fecha) exacto de tu RUN para continuar desde el Temp/:
-# export RUN_ID="YYYYMMDD-HHMMSS"
+# INGRESA AQUÍ LA RUTA ABSOLUTA O RELATIVA DEL MODELO A EVALUAR
+export CHECKPOINT_PATH="/home/ademir.munoz/RobustnessCNN/Resultado/modelo/"
 
 export PYTHONPATH="$(pwd):$PYTHONPATH"
 
-echo "[INFO] Configuración del experimento:"
-echo "       Método  : $METHOD"
-echo "       Dataset : $DATASET  |  Modelo: $MODEL"
-echo "       Épocas  : $EPOCHS"
+echo "[INFO] Configuración de la Evaluación:"
+echo "       Método      : $METHOD"
+echo "       Dataset     : $DATASET  |  Modelo: $MODEL"
+echo "       Checkpoint  : $CHECKPOINT_PATH"
 
 # -----------------------------------------------------------------------------
 # [7] EJECUCIÓN
 # -----------------------------------------------------------------------------
 echo ""
-echo "[INFO] Lanzando entrenamiento principal..."
+echo "[INFO] Lanzando pipeline de pruebas y métricas..."
 
-python main.py
+python eval_checkpoint.py
 
 EXIT_CODE=$?
 
@@ -125,10 +117,8 @@ if [ $EXIT_CODE -eq 0 ]; then
     echo "  ESTADO   : ÉXITO ✓"
     echo ""
     echo "  Archivos de salida:"
-    echo "    Modelos    → Resultado/modelo/"
-    echo "    Checkpoints → Resultado/Temp/"
-    echo "  Para copiar a tu PC:"
-    echo "    scp -r $(whoami)@oceano.pucv.cl:$(pwd)/Resultado/ ./Resultado/"
+    echo "    Las métricas de Acc natural, PGD, FGSM y AutoAttack se han guardado"
+    echo "    junto al checkpoint en el archivo 'metricas_evaluacion.json'."
 else
     echo "  ESTADO   : ERROR (código $EXIT_CODE) ✗"
     echo "  Revisa el log en: logs/${SLURM_JOB_NAME}_${SLURM_JOB_ID}.err"
@@ -150,22 +140,5 @@ exit $EXIT_CODE
 #  Eficiencia post-job   →  seff <JOB_ID>
 #  Ver módulos           →  module avail
 #  Log en tiempo real    →  tail -f logs/<nombre>_<JOB_ID>.log
-#
-#  RECUPERAR RESULTADOS (desde tu PC):
-#  -------------------------------------------------
-#  Todo Resultado/       →  scp -r usuario@oceano.pucv.cl:/ruta/Resultado/ ./
-#  Solo modelo final     →  scp usuario@oceano.pucv.cl:/ruta/Resultado/modelo/**/*_final.pt ./
-#  Solo métricas CSV     →  scp usuario@oceano.pucv.cl:/ruta/Resultado/modelo/**/metricas.csv ./
-#
-#  CONDA (alternativa al venv):
-#  -------------------------------------------------
-#  module load anaconda/2023
-#  conda activate mi_entorno
-#  (eliminar sección [5])
-#
-#  MÚLTIPLES EXPERIMENTOS (array jobs):
-#  -------------------------------------------------
-#  #SBATCH --array=1-5
-#  export SEED=$SLURM_ARRAY_TASK_ID   # 5 semillas distintas
 #
 # =============================================================================
