@@ -7,19 +7,17 @@ import torch.optim as optim
 # ===========================================================================
 # Interfaz pública genérica (registrada en Metodo/__init__.py)
 # ===========================================================================
-# Todo método en Metodo/ debe exponer estas tres funciones con esta firma.
-# Así train.py y main.py no necesitan saber qué método está activo.
 
 def make_state(cfg, device):
     """
-    D-TRADES (sin EMA) no requiere estado persistente entre batches.
+    D-TRADES no requiere estado persistente entre batches.
     Retorna None — train.py acepta method_state=None sin cambios.
     """
     return None
 
 
 def save_state(state, path: str) -> None:
-    """Sin estado persistente no hay nada que guardar en el checkpoint."""
+    """Sin estado persistente no hay nada que guardar."""
     pass
 
 
@@ -38,58 +36,43 @@ def compute_loss(model, x, y, cfg, method_state):
     x            : batch de imágenes limpias [B, C, H, W].
     y            : etiquetas verdaderas [B].
     cfg          : instancia de Config (solo lectura).
-    method_state : None.
+    method_state : None (no se usa).
 
     Retorna
     -------
     loss : Tensor escalar con gradiente listo para .backward().
     info : dict con métricas de diagnóstico (sin gradiente).
     """
-    loss_total, lam, loss_natural, loss_robust, alpha_cls, beta_cls = d_trades_loss(
+    loss_total, lam, loss_natural, loss_robust = d_trades_loss(
         model         = model,
         x_natural     = x,
         y             = y,
         step_size     = cfg.step_size,
         epsilon       = cfg.epsilon,
         perturb_steps = cfg.num_steps,
-        num_classes   = cfg.num_classes,
-        alpha_base    = cfg.alpha_base,
-        beta_base     = cfg.beta_base,
-        gamma         = cfg.gamma,
+        alpha         = cfg.alpha_base,   # peso de H(x) dentro del término adversarial
+        beta          = cfg.beta_base,    # amplificador de KL según sensibilidad
+        gamma         = cfg.gamma,        # peso de (1 - f(x)_y) como ponderador global
     )
     info = {
-        "lambda_min":      lam.min().item(),
-        "lambda_max":      lam.max().item(),
-        "lambda_mean":     lam.mean().item(),
-        "loss_natural":    loss_natural.item(),
-        "loss_robust":     loss_robust.item(),
-        "alpha_per_class": alpha_cls,   # list[float] de num_classes valores
-        "beta_per_class":  beta_cls,    # list[float] de num_classes valores
+        "lambda_min":   lam.min().item(),
+        "lambda_max":   lam.max().item(),
+        "lambda_mean":  lam.mean().item(),
+        "loss_natural": loss_natural.item(),
+        "loss_robust":  loss_robust.item(),
     }
     return loss_total, info
 
 
 # ===========================================================================
-# Funciones de normalización
+# Normalización
 # ===========================================================================
 
 @torch.no_grad()
 def _normalize_batch(v, eps=1e-8):
     """
     Normaliza un vector [B] al rango [0, 1] con min-max sobre el batch.
-    eps=1e-8 evita division por cero cuando todos los valores son iguales.
-    """
-    vmin = v.min()
-    vmax = v.max()
-    return (v - vmin) / (vmax - vmin + eps)
-
-
-@torch.no_grad()
-def _normalize_class_stats(v, eps=1e-8):
-    """
-    Normaliza un vector [num_classes] al rango [0, 1] con min-max entre clases.
-    Se usa para normalizar H_c y S_c antes de calcular alpha_c y beta_c.
-    eps=1e-8 evita division por cero cuando todas las clases tienen el mismo valor.
+    eps=1e-8 evita división por cero cuando todos los valores son iguales.
     """
     vmin = v.min()
     vmax = v.max()
@@ -97,37 +80,7 @@ def _normalize_class_stats(v, eps=1e-8):
 
 
 # ===========================================================================
-# Estadísticas por clase calculadas sobre el batch actual (sin EMA)
-# ===========================================================================
-
-@torch.no_grad()
-def _batch_class_stats(y, entropy, sensitivity, num_classes):
-    """
-    Calcula H_c y S_c directamente sobre las muestras del batch actual.
-    No hay memoria de batches anteriores — cada batch es completamente independiente.
-
-    Para cada clase c presente en el batch:
-      H_c = media de entropía de las muestras de clase c en este batch.
-      S_c = media de sensibilidad de las muestras de clase c en este batch.
-
-    Para clases sin muestras en el batch, los valores quedan en 0.0.
-    """
-    device = y.device
-    H_c = torch.zeros(num_classes, device=device)
-    S_c = torch.zeros(num_classes, device=device)
-
-    for c in range(num_classes):
-        mask = (y == c)
-        if mask.sum() == 0:
-            continue
-        H_c[c] = entropy[mask].mean()
-        S_c[c] = sensitivity[mask].mean()
-
-    return H_c, S_c
-
-
-# ===========================================================================
-# Funcion de perdida D-TRADES (sin EMA)
+# Función de pérdida D-TRADES — nueva formulación
 # ===========================================================================
 
 def d_trades_loss(
@@ -137,58 +90,91 @@ def d_trades_loss(
     step_size,
     epsilon,
     perturb_steps,
-    num_classes,
     distance='l_inf',
-    alpha_base=0.5,
-    beta_base=0.5,
-    gamma=0.25,
-    normalize_terms=True,
+    alpha=0.5,
+    beta=0.5,
+    gamma=0.5,
+    normalize_sensitivity=True,
     per_sample_sensitivity=False,
     EPS=1e-12,
 ):
     """
-    Calcula la perdida D-TRADES con lambda dinámico por muestra (sin EMA).
+    Pérdida D-TRADES con formulación reestructurada.
 
-    Fórmula de pérdida:
-        L_D-TRADES(f, x, y) = L_CE(f(x), y) + lambda(x) * KL(f(x) || f(x+delta))
-
-    Lambda dinámico por muestra:
-        lambda(x_i) = alpha_c * H(x_i) + beta_c * S(x_i) + gamma * (1 - f(x´)_y)
+    Estructura de pérdida:
+    ──────────────────────
+        L = L_CE(f(x), y)
+          + (1 - f(x)_y) * [ lambda_S(x) * KL(f(x) || f(x')) + alpha * H(x) ]
 
     Donde:
-      - alpha_c = alpha_base * (1 + H_tilde_c): peso de entropía escalado por la
-        incertidumbre media de la clase c en el batch actual (sin EMA).
-      - beta_c  = beta_base * (1 + S_tilde_c): peso de sensibilidad escalado por la
-        sensibilidad media de la clase c en el batch actual (sin EMA).
-      - H_tilde_c, S_tilde_c: normalización min-max entre clases del batch actual.
-      - H(x_i): Entropía local del ejemplo limpio.
-      - S(x_i): Sensibilidad adversarial (norma gradiente KL).
-      - (1 - f(x´)_y): Probabilidad de error adversarial por muestra (estilo MART).
+        (1 - f(x)_y)        Ponderador global por muestra. Inspirado en MART
+                            (Wang et al., 2020). Si el modelo ya clasifica bien
+                            la muestra (p_y alto), este factor es bajo y la
+                            muestra recibe poca penalización adversarial. Si el
+                            modelo está confundido (p_y bajo), el factor es alto
+                            y la muestra recibe máxima penalización.
+                            Rango: [0, 1]. Calculado sobre la muestra LIMPIA.
 
-    Parámetros:
-      model                  -> CNN a entrenar.
-      x_natural              -> Imágenes limpias [B, C, H, W].
-      y                      -> Etiquetas verdaderas [B].
-      step_size              -> Paso del ataque PGD.
-      epsilon                -> Radio máximo de perturbacion.
-      perturb_steps          -> Pasos del ataque PGD.
-      num_classes            -> Número de clases del dataset.
-      distance               -> Norma del ataque: 'l_inf' o 'l_2'.
-      alpha_base             -> Peso base para la entropía.
-      beta_base              -> Peso base para la sensibilidad.
-      gamma                  -> Peso del término de error adversarial en lambda.
-      normalize_terms        -> Si True, normaliza H(x) y S(x) locales a [0,1].
-      per_sample_sensitivity -> Si True, sensibilidad exacta por muestra (loop).
-                                Si False, aproximación por batch (recomendado).
-      EPS                    -> Estabilidad numérica para log(0) en entropía.
+        lambda_S(x)         Amplificador del KL según sensibilidad adversarial.
+                            = 1 + beta * S_tilde(x)
+                            Garantiza piso en 1 (el KL nunca desaparece) y
+                            amplifica hasta (1 + beta) en zonas muy sensibles.
+                            S_tilde(x): sensibilidad normalizada a [0, 1].
+                            Rango: [1, 1 + beta].
 
-    Retorna:
-      loss_total   -> Pérdida total (escalar, con gradiente).
-      lam          -> Lambda por muestra [B] (detached).
-      loss_natural -> Pérdida de clasificación (detached, para logging).
-      loss_robust  -> Pérdida robusta ponderada (detached, para logging).
-      alpha_cls    -> list[float] de alpha_c por clase (para métricas).
-      beta_cls     -> list[float] de beta_c por clase (para métricas).
+        KL(f(x) || f(x'))   Divergencia KL entre predicción limpia y adversarial.
+                            Mide cuánto cambia el modelo bajo ataque.
+
+        alpha * H(x)        Penalización por incertidumbre en la predicción limpia.
+                            H(x) y KL son ambas divergencias/entropías sobre
+                            distribuciones de probabilidad — mismo orden de magnitud,
+                            suma coherente dentro del corchete.
+                            Rango de H(x) normalizado: [0, 1].
+
+    Por qué esta estructura es coherente:
+    ──────────────────────────────────────
+        - (1 - f(x)_y) opera como peso global: escala TODA la parte adversarial
+          según la dificultad de la muestra. Esto es análogo a MART pero
+          manteniendo la estructura KL de TRADES.
+
+        - lambda_S(x) opera dentro del corchete sobre el KL únicamente. La
+          sensibilidad (norma del gradiente KL) tiene escala diferente a H(x),
+          así que no se suma directamente sino que modula el término con el que
+          comparte naturaleza (el KL).
+
+        - alpha * H(x) y KL son compatibles en escala: ambos son no-negativos
+          y del mismo orden de magnitud cuando las distribuciones son similares.
+          Se suman dentro del corchete de forma coherente.
+
+    Parámetros
+    ──────────
+    model                  CNN a entrenar.
+    x_natural              Imágenes limpias [B, C, H, W].
+    y                      Etiquetas verdaderas [B].
+    step_size              Paso del ataque PGD.
+    epsilon                Radio máximo de perturbación.
+    perturb_steps          Pasos del ataque PGD.
+    distance               Norma del ataque: 'l_inf' o 'l_2'.
+    alpha                  Peso de H(x) dentro del término adversarial.
+    beta                   Factor de amplificación del KL por sensibilidad.
+                           beta=0 equivale a TRADES puro con ponderador MART.
+    gamma                  No se usa directamente en la pérdida — (1-f(x)_y)
+                           ya es el ponderador. Reservado para ablaciones futuras
+                           (p.ej. gamma * (1 - f(x)_y) si se quiere escalar).
+    normalize_sensitivity  Si True, normaliza S(x) a [0, 1] antes de calcular
+                           lambda_S. Necesario para que beta tenga un efecto
+                           consistente independientemente de la escala del gradiente.
+    per_sample_sensitivity Si True, sensibilidad exacta por muestra (loop).
+                           Si False, aproximación por batch (recomendado).
+    EPS                    Estabilidad numérica para log(0) en entropía.
+
+    Retorna
+    ───────
+    loss_total   Pérdida total (escalar, con gradiente).
+    lam          Ponderador efectivo por muestra [B] = (1-f(x)_y) * lambda_S(x).
+                 Detached. Útil para monitorear cuánto peso recibe cada muestra.
+    loss_natural Pérdida de clasificación (detached, para logging).
+    loss_robust  Término adversarial completo (detached, para logging).
     """
 
     # ---------- Ataque PGD ----------
@@ -244,29 +230,37 @@ def d_trades_loss(
 
     model.train()
 
-    # ---------- Forward limpio ----------
+    # ---------- Forward limpio y adversarial ----------
     logits_nat    = model(x_natural)
     logits_adv    = model(x_adv.detach())
 
     probs_nat     = F.softmax(logits_nat, dim=1).clamp(min=1e-8, max=1.0)
     log_probs_adv = F.log_softmax(logits_adv, dim=1).clamp(min=-50, max=0)
 
+    # Pérdida de clasificación sobre muestra limpia
     loss_natural = F.cross_entropy(logits_nat, y, reduction='mean')
 
-    # KL por muestra [B]
+    # KL por muestra [B]: KL(f(x) || f(x'))
     kl_per_example = F.kl_div(
         log_probs_adv, probs_nat, reduction='none'
     ).sum(dim=1)
 
-    # ---------- Entropia local H(x) [B] ----------
+    # ---------- H(x): entropía local [B] ----------
     # H(x) = -sum_c p_c * log(p_c)
-    # Captura la incertidumbre del modelo sobre cada muestra.
+    # Alta cuando el modelo está confundido (distribución plana).
+    # Baja cuando el modelo está seguro (distribución concentrada).
+    # Mismo orden de magnitud que KL — coherente como término aditivo.
     entropy = -(probs_nat * torch.log(probs_nat.clamp_min(EPS))).sum(dim=1)
 
-    # ---------- Sensibilidad local S(x) [B] ----------
-    # S(x) = || nabla_{x+delta} KL(f(x) || f(x+delta)) ||_2
+    # Normaliza H(x) al rango [0, 1] para que alpha tenga escala consistente.
+    entropy_n = _normalize_batch(entropy)
+
+    # ---------- S(x): sensibilidad adversarial [B] ----------
+    # S(x) = || nabla_{x'} KL(f(x) || f(x')) ||_2
+    # Mide cuánto varía la KL ante pequeñas perturbaciones de x'.
+    # No se suma directamente a la pérdida — modula el KL dentro de lambda_S.
     if per_sample_sensitivity:
-        # Exacta por muestra: loop de backwards individuales.
+        # Exacta por muestra: backwards individuales. Útil para análisis.
         sens_list = []
         model.eval()
         for i in range(batch_size):
@@ -279,10 +273,11 @@ def d_trades_loss(
                 )
             gi = torch.autograd.grad(kl_i, xi, create_graph=False, retain_graph=False)[0]
             sens_list.append(gi.view(gi.size(0), -1).norm(p=2, dim=1))
-        sensitivity = torch.cat(sens_list, dim=0)
+        sensitivity = torch.cat(sens_list, dim=0)   # [B]
         model.train()
     else:
-        # Aproximacion por batch: un unico backward sobre la KL promedio.
+        # Aproximación por batch: un único backward sobre KL promedio.
+        # Suficiente para modular el KL — recomendado para entrenamiento.
         x_adv_req = x_adv.detach().clone().requires_grad_(True)
         kl_total  = F.kl_div(
             F.log_softmax(model(x_adv_req), dim=1),
@@ -290,55 +285,45 @@ def d_trades_loss(
             reduction='batchmean'
         )
         g = torch.autograd.grad(kl_total, x_adv_req, create_graph=False)[0]
-        sensitivity = g.view(batch_size, -1).norm(p=2, dim=1)
+        sensitivity = g.view(batch_size, -1).norm(p=2, dim=1)   # [B]
 
-    # ---------- Normalización local [B] -> [0, 1] ----------
-    if normalize_terms:
-        entropy_n     = _normalize_batch(entropy)
-        sensitivity_n = _normalize_batch(sensitivity)
-    else:
-        entropy_n     = entropy
-        sensitivity_n = sensitivity
+    # Normaliza S(x) a [0, 1] para que beta tenga un efecto consistente
+    # independientemente de la magnitud absoluta del gradiente.
+    sensitivity_n = _normalize_batch(sensitivity) if normalize_sensitivity else sensitivity
 
-    # ---------- alpha_c y beta_c por clase (batch actual, sin EMA) ----------
-    # H_c y S_c: media de entropía y sensibilidad por clase en este batch.
-    # Se normalizan entre clases con min-max para obtener pesos relativos.
-    H_c, S_c = _batch_class_stats(
-        y, entropy.detach(), sensitivity.detach(), num_classes
-    )
-    H_tilde = _normalize_class_stats(H_c)              # [num_classes] en [0, 1]
-    S_tilde = _normalize_class_stats(S_c)              # [num_classes] en [0, 1]
+    # ---------- lambda_S(x): amplificador del KL por sensibilidad [B] ----------
+    # lambda_S(x) = 1 + beta * S_tilde(x)
+    # Piso en 1: el KL nunca desaparece aunque la sensibilidad sea mínima.
+    # Techo en (1 + beta): la amplificación máxima es controlada por beta.
+    # Se detacha porque es un peso, no un término que el modelo deba optimizar.
+    lambda_S = (1.0 + beta * sensitivity_n).detach()   # [B], rango [1, 1+beta]
 
-    alpha_c = alpha_base * (1.0 + H_tilde)             # [num_classes] en [alpha_base, 2*alpha_base]
-    beta_c  = beta_base  * (1.0 + S_tilde)             # [num_classes] en [beta_base,  2*beta_base]
+    # ---------- (1 - f(x)_y): ponderador global por muestra [B] ----------
+    # Probabilidad de error en la clase correcta, calculada sobre la muestra LIMPIA.
+    # Si p_y = 0.9 → peso = 0.1 (muestra fácil, poca penalización adversarial).
+    # Si p_y = 0.3 → peso = 0.7 (muestra difícil, mucha penalización adversarial).
+    # Rango natural [0, 1]. No requiere normalización.
+    # Se detacha: es un peso, no un término a optimizar directamente.
+    error_weight = (1.0 - probs_nat[torch.arange(batch_size), y]).detach()   # [B]
 
-    alpha_per_sample = alpha_c[y]                      # [B]
-    beta_per_sample  = beta_c[y]                       # [B]
+    # ---------- Término adversarial reestructurado ----------
+    # Dentro del corchete:
+    #   lambda_S(x) * KL  →  KL amplificado por sensibilidad local
+    #   alpha * H(x)      →  penalización por incertidumbre (misma escala que KL)
+    #
+    # Todo el corchete ponderado por (1 - f(x)_y):
+    #   muestras difíciles (p_y bajo)  → peso alto → más penalización adversarial
+    #   muestras fáciles  (p_y alto)   → peso bajo → menos penalización adversarial
+    inner_term   = lambda_S * kl_per_example + alpha * entropy_n   # [B]
+    loss_robust_dynamic = (error_weight * inner_term).mean()       # escalar
 
-    # ---------- Error adversarial por muestra: (1 - f(x´)_y) ----------
-    # Inspirado en MART: penaliza más las muestras donde el modelo
-    # falla claramente en el dominio adversarial.
-    probs_adv        = F.softmax(logits_adv, dim=1)
-    p_true_class_adv = probs_adv.gather(1, y.view(-1, 1)).squeeze(1)  # [B]
-    error_adv        = (1.0 - p_true_class_adv).detach()              # [B]
+    # lam: ponderador efectivo por muestra para logging.
+    # Captura cuánto peso total recibe la parte adversarial de cada muestra.
+    # = (1 - f(x)_y) * lambda_S(x), el factor multiplicativo del KL.
+    lam = (error_weight * lambda_S).detach()   # [B]
 
-    # ---------- Lambda dinámico [B] ----------
-    # lambda(x_i) = alpha_c * H(x_i) + beta_c * S(x_i) + gamma * (1 - f(x´)_y)
-    lam = (
-        alpha_per_sample * entropy_n
-        + beta_per_sample  * sensitivity_n
-        + gamma            * error_adv
-    ).detach()
-
-    # ---------- Pérdida robusta ponderada ----------
-    loss_robust_dynamic = (lam * kl_per_example).mean()
+    # ---------- Pérdida total ----------
+    # L = L_CE(f(x), y) + (1 - f(x)_y) * [lambda_S(x) * KL + alpha * H(x)]
     loss_total = loss_natural + loss_robust_dynamic
 
-    return (
-        loss_total,
-        lam,
-        loss_natural.detach(),
-        loss_robust_dynamic.detach(),
-        alpha_c.tolist(),     # list[float] de num_classes valores
-        beta_c.tolist(),      # list[float] de num_classes valores
-    )
+    return loss_total, lam, loss_natural.detach(), loss_robust_dynamic.detach()
