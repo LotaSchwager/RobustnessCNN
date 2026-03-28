@@ -34,16 +34,28 @@ class Config:
             self._step_size = 2/255 if dataset in ["cifar10", "cifar100"] else 0.01
             
             # Hiperparámetros del lambda dinámico adaptativo:
-            #   alpha_base: peso de la entropía local H(x) dentro del término adversarial.
-            #   beta_base : factor de amplificación del KL por sensibilidad local S(x).
-            self._alpha_base = 0.5
-            self._beta_base  = 0.5
+            #   alpha_base    : peso de H(x) en el modulador lambda.
+            #   beta_base     : peso de S(x) en el modulador lambda.
+            #   weight_floor  : piso mínimo de (1-p_y) para evitar olvido de robustez.
+            #   lam_clamp_min : piso del peso efectivo w(x) = error_weight * lambda.
+            #   lam_clamp_max : techo del peso efectivo w(x) — previene outliers.
+            #   warmup_epochs : épocas de rampa lineal para el término adversarial.
+            self._alpha_base    = 0.5
+            self._beta_base     = 0.5
+            self._weight_floor  = 0.1
+            self._lam_clamp_min = 0.1
+            self._lam_clamp_max = 5.0
+            self._warmup_epochs = 10
         else:
-            self._epsilon    = 8/255
-            self._num_steps  = 10
-            self._step_size  = 2/255
-            self._alpha_base = 0.5
-            self._beta_base  = 0.5
+            self._epsilon       = 8/255
+            self._num_steps     = 10
+            self._step_size     = 2/255
+            self._alpha_base    = 0.5
+            self._beta_base     = 0.5
+            self._weight_floor  = 0.1
+            self._lam_clamp_min = 0.1
+            self._lam_clamp_max = 5.0
+            self._warmup_epochs = 10
             
         self._save_freq    = 25
         self._log_interval = 100
@@ -132,6 +144,14 @@ class Config:
     def alpha_base(self):  return self._alpha_base
     @property
     def beta_base(self):   return self._beta_base
+    @property
+    def weight_floor(self):  return self._weight_floor
+    @property
+    def lam_clamp_min(self): return self._lam_clamp_min
+    @property
+    def lam_clamp_max(self): return self._lam_clamp_max
+    @property
+    def warmup_epochs(self): return self._warmup_epochs
     @property
     def save_freq(self):   return self._save_freq
     @property
