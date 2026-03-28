@@ -165,9 +165,12 @@ def main():
             optimizer.load_state_dict(torch.load(opt_cp, map_location=cfg.device))
             print(f"[RESUME] Optimizer restaurado.")
 
-        # Restaura el estado del método (ej. ClassStats.EMA para D-TRADES)
+        # Restaura el estado del método solo si el archivo .stats existe.
+        # Con métodos que no tienen estado (make_state→None) load_state es pass
+        # y el archivo nunca se crea, así que esta guarda es necesaria.
         checkpoint_base = latest_cp[:-3]   # quita ".pt"
-        load_state_fn(method_state, checkpoint_base, cfg.device)
+        if os.path.exists(checkpoint_base + ".stats"):
+            load_state_fn(method_state, checkpoint_base, cfg.device)
 
         if scheduler is not None:
             for _ in range(start_epoch - 1):
