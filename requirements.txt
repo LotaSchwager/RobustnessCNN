@@ -5,4 +5,4 @@ pandas>=2.0.0
 openpyxl>=3.1.0
 tqdm>=4.0.0
 python-dotenv>=1.0.0
-autoattack
+git+https://github.com/fra31/auto-attack
