@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -50,9 +52,9 @@ def compute_loss(model, x, y, cfg, method_state):
         step_size     = cfg.step_size,
         epsilon       = cfg.epsilon,
         perturb_steps = cfg.num_steps,
+        num_classes   = cfg.num_classes,
         alpha         = cfg.alpha_base,   # peso de H(x) dentro del término adversarial
         beta          = cfg.beta_base,    # amplificador de KL según sensibilidad
-        gamma         = cfg.gamma,        # peso de (1 - f(x)_y) como ponderador global
     )
     info = {
         "lambda_min":   lam.min().item(),
@@ -90,10 +92,10 @@ def d_trades_loss(
     step_size,
     epsilon,
     perturb_steps,
+    num_classes=10,
     distance='l_inf',
     alpha=0.5,
     beta=0.5,
-    gamma=0.5,
     normalize_sensitivity=True,
     per_sample_sensitivity=False,
     EPS=1e-12,
@@ -154,13 +156,13 @@ def d_trades_loss(
     step_size              Paso del ataque PGD.
     epsilon                Radio máximo de perturbación.
     perturb_steps          Pasos del ataque PGD.
+    num_classes            Número de clases del dataset. Necesario para
+                           normalizar H(x) de forma diferenciable a [0, 1]
+                           dividiendo por log(num_classes).
     distance               Norma del ataque: 'l_inf' o 'l_2'.
     alpha                  Peso de H(x) dentro del término adversarial.
     beta                   Factor de amplificación del KL por sensibilidad.
                            beta=0 equivale a TRADES puro con ponderador MART.
-    gamma                  No se usa directamente en la pérdida — (1-f(x)_y)
-                           ya es el ponderador. Reservado para ablaciones futuras
-                           (p.ej. gamma * (1 - f(x)_y) si se quiere escalar).
     normalize_sensitivity  Si True, normaliza S(x) a [0, 1] antes de calcular
                            lambda_S. Necesario para que beta tenga un efecto
                            consistente independientemente de la escala del gradiente.
@@ -252,8 +254,13 @@ def d_trades_loss(
     # Mismo orden de magnitud que KL — coherente como término aditivo.
     entropy = -(probs_nat * torch.log(probs_nat.clamp_min(EPS))).sum(dim=1)
 
-    # Normaliza H(x) al rango [0, 1] para que alpha tenga escala consistente.
-    entropy_n = _normalize_batch(entropy)
+    # Normaliza H(x) al rango [0, 1] dividiendo por log(num_classes).
+    # A diferencia de _normalize_batch (que es @torch.no_grad() y mata el
+    # gradiente), esta normalización es diferenciable: el gradiente de H(x)
+    # fluye correctamente y penaliza predicciones inciertas.
+    # H_max = log(C) cuando la distribución es uniforme → H(x)/log(C) ∈ [0, 1].
+    log_C = math.log(num_classes) if num_classes > 1 else 1.0
+    entropy_n = entropy / log_C
 
     # ---------- S(x): sensibilidad adversarial [B] ----------
     # S(x) = || nabla_{x'} KL(f(x) || f(x')) ||_2
