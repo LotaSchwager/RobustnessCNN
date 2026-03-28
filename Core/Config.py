@@ -51,7 +51,7 @@ class Config:
             self._gamma      = 0.0
             self._rho        = 0.1
             
-        self._save_freq    = 3
+        self._save_freq    = 20
         self._log_interval = 100
         self._run_name     = f"{method}_{dataset}_{model}"
         self._seed         = seed

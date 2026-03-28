@@ -23,9 +23,11 @@ def make_state(cfg, device) -> "ClassStats":
 
 def save_state(state: "ClassStats", path: str) -> None:
     """Serializa el estado EMA a disco junto al checkpoint del modelo."""
+    stats_path = path + ".stats"
+    print(f"  -> Guardando estadisticas de clase: {stats_path}")
     torch.save(
         {"H_c": state.H_c.cpu(), "S_c": state.S_c.cpu(), "err_c": state.err_c.cpu()},
-        path + ".stats",
+        stats_path,
     )
 
 
@@ -229,17 +231,21 @@ class ClassStats:
         Calcula alpha_c y beta_c adaptativos para cada muestra del batch,
         usando las estadísticas globales normalizadas de su clase.
 
-        Fórmulas:
-          alpha_c = alpha_base * H_c_tilde   (escala en [0, alpha_base])
-          beta_c  = beta_base  * S_c_tilde   (escala en [0, beta_base])
+        Fórmulas (Opción B — con piso garantizado):
+          alpha_c = alpha_base * (1 + H_c_tilde)   (escala en [alpha_base, 2*alpha_base])
+          beta_c  = beta_base  * (1 + S_c_tilde)   (escala en [beta_base,  2*beta_base])
 
         Donde H_c_tilde y S_c_tilde son versiones min-max normalizadas
         de H_c y S_c sobre todas las clases (rango [0, 1]).
 
-        Esta es la Opción A conservadora: los valores están acotados en
-        [0, alpha_base] y [0, beta_base]. Cuando la clase tiene incertidumbre
-        mínima relativa, alpha_c tiende a 0; cuando es máxima, alpha_c = alpha_base.
-        Análogo para beta_c con sensibilidad.
+        A diferencia de la Opción A (alpha_c = alpha_base * H_tilde_c), aquí
+        ninguna clase puede colapsar a cero: el factor (1 + H_tilde_c) siempre
+        vale al menos 1.0. Esto evita que clases con baja incertidumbre relativa
+        reciban un lambda efectivamente nulo y queden sin defensa adversarial.
+
+        La clase con mayor H_c recibe alpha_c = 2 * alpha_base.
+        La clase con menor H_c recibe alpha_c = alpha_base (no cero).
+        Análogo para beta_c con S_c.
 
         Parámetros:
           y          -> Etiquetas verdaderas del batch, forma [B].
@@ -251,13 +257,15 @@ class ClassStats:
           beta_per_sample  -> Tensor [B] con beta_c para cada muestra.
         """
         # Normalizar estadísticas de clase al rango [0, 1] con min-max entre clases
-        # Ũ_c = (H_c - min_j H_j) / (max_j H_j - min_j H_j + eps)
-        H_tilde   = _normalize_class_stats(self.H_c)    # [num_classes]
-        S_tilde   = _normalize_class_stats(self.S_c)    # [num_classes]
+        # H_tilde_c = (H_c - min_j H_j) / (max_j H_j - min_j H_j + eps)
+        H_tilde = _normalize_class_stats(self.H_c)    # [num_classes], rango [0, 1]
+        S_tilde = _normalize_class_stats(self.S_c)    # [num_classes], rango [0, 1]
 
-        # alpha_c = alpha_base * H_tilde_c  (Opción A: conservadora, sin piso)
-        alpha_c = alpha_base * H_tilde   # [num_classes]
-        beta_c  = beta_base  * S_tilde   # [num_classes]
+        # Opción B: piso garantizado en alpha_base y beta_base.
+        # El (1 + ...) asegura que ninguna clase recibe peso cero,
+        # independientemente de cuán baja sea su incertidumbre o sensibilidad relativa.
+        alpha_c = alpha_base * (0.5 + H_tilde)   # [num_classes], rango [alpha_base, 2*alpha_base]
+        beta_c  = beta_base  * (0.5 + S_tilde)   # [num_classes], rango [beta_base,  2*beta_base]
 
         # Asignar a cada muestra el valor de su clase correspondiente
         alpha_per_sample = alpha_c[y]   # [B]
@@ -279,10 +287,12 @@ class ClassStats:
           alpha_class_list : list[float] de longitud num_classes
           beta_class_list  : list[float] de longitud num_classes
         """
-        H_tilde = _normalize_class_stats(self.H_c)   # [num_classes]
-        S_tilde = _normalize_class_stats(self.S_c)   # [num_classes]
-        alpha_c = (alpha_base * H_tilde).tolist()    # list[float]
-        beta_c  = (beta_base  * S_tilde).tolist()    # list[float]
+        # Misma fórmula Opción B que get_alpha_beta(), pero devuelve listas Python
+        # para que Metrics pueda serializarlas directamente al CSV.
+        H_tilde = _normalize_class_stats(self.H_c)             # [num_classes]
+        S_tilde = _normalize_class_stats(self.S_c)             # [num_classes]
+        alpha_c = (alpha_base * (1.0 + H_tilde)).tolist()      # list[float]
+        beta_c  = (beta_base  * (1.0 + S_tilde)).tolist()      # list[float]
         return alpha_c, beta_c
 
 
@@ -304,7 +314,8 @@ def d_trades_loss(
     beta_base=1.0,                # Peso base de sensibilidad (antes: beta)
     gamma=0.5,                    # Peso del término de error de clase en lambda
     normalize_terms=True,         # True: normaliza entropía y sensibilidad locales a [0,1]
-    per_sample_sensitivity=True,  # True: cálculo exacto por muestra (loop); False: aproximación por batch
+    per_sample_sensitivity=False,  # True: cálculo exacto por muestra (loop); False: aproximación por batch
+    beta_trades=6.0,
     EPS=1e-12,                    # Estabilidad numérica para log(0) en entropía
 ):
     """
@@ -320,8 +331,8 @@ def d_trades_loss(
         H(x)    -> Entropía local de la muestra (incertidumbre inmediata)
         S(x)    -> Sensibilidad adversarial local normalizada (norma del gradiente KL)
         err_c   -> Error acumulado EMA de la clase c (memoria global)
-        alpha_c -> alpha_base * H_tilde_c  (modulado por incertidumbre global de la clase)
-        beta_c  -> beta_base  * S_tilde_c  (modulado por sensibilidad global de la clase)
+        alpha_c -> alpha_base * (1 + H_tilde_c)  (Opción B: piso en alpha_base, techo en 2*alpha_base)
+        beta_c  -> beta_base  * (1 + S_tilde_c)  (Opción B: piso en beta_base,  techo en 2*beta_base)
         gamma   -> Hiperparámetro fijo que controla el peso del error de clase
 
     Parámetros:
@@ -419,7 +430,9 @@ def d_trades_loss(
     # KL por muestra: KL(f(x) || f(x+delta)), forma [B]
     # Representa qué tanto cambia la predicción del modelo al agregar la perturbación.
     kl_per_example = F.kl_div(
-        log_probs_adv, probs_nat, reduction='none'
+        log_probs_adv,
+        probs_nat, 
+        reduction='none'
     ).sum(dim=1)
 
     # ---------- Cálculo de entropía local H(x) ----------
@@ -465,18 +478,28 @@ def d_trades_loss(
         )
         g = torch.autograd.grad(kl_total, x_adv_req, create_graph=False)[0]
         sensitivity = g.view(batch_size, -1).norm(p=2, dim=1)   # [B]
+        sensitivity = torch.log1p(sensitivity)
 
     # ---------- Normalización local de entropía y sensibilidad ----------
     # Se normalizan al rango [0, 1] usando min-max sobre el batch actual.
     # Esto evita que la sensibilidad, que puede tomar valores grandes,
     # domine sobre la entropía, que ya está acotada en [0, log(C)].
     # La normalización es local (por batch), no global.
-    if normalize_terms:
-        entropy_n    = _normalize_batch(entropy)      # H(x) normalizado, [B]
-        sensitivity_n = _normalize_batch(sensitivity) # S(x) normalizado, [B]
-    else:
-        entropy_n    = entropy
-        sensitivity_n = sensitivity
+    # Normalización más estable (NO dependiente del batch)
+
+    num_classes = probs_nat.size(1)
+    
+    entropy_n = entropy / torch.log(torch.tensor(num_classes, device=entropy.device))
+    sensitivity_n = torch.log1p(sensitivity)
+    #entropy_n = entropy / torch.log(torch.tensor(num_classes, device=entropy.device))
+    #sensitivity_n = sensitivity / (sensitivity.mean() + 1e-8)
+
+    #if normalize_terms:
+    #    entropy_n    = _normalize_batch(entropy)      # H(x) normalizado, [B]
+    #    sensitivity_n = _normalize_batch(sensitivity) # S(x) normalizado, [B]
+    #else:
+    #    entropy_n    = entropy
+    #    sensitivity_n = sensitivity
 
     # ---------- Actualización de estadísticas EMA por clase ----------
     # Se actualizan H_c, S_c y err_c usando los valores locales del batch actual.
@@ -513,9 +536,11 @@ def d_trades_loss(
         + gamma            * err_per_sample
     ).detach()   # [B]
 
+    lam = lam.clamp(0.1, 5.0)
     # ---------- Pérdida robusta ponderada dinámicamente ----------
     # L_RD = mean( lambda(x_i) * KL(f(x_i) || f(x_i + delta)) )
-    loss_robust_dynamic = (lam * kl_per_example).mean()
+    loss_robust_dynamic = (lam * kl_per_example).mean() * beta_trades
+    #loss_robust_dynamic = (lam * kl_per_example).mean()
 
     # Pérdida total D-TRADES
     # L_D-TRADES = L_CE(f(x), y) + L_RD
