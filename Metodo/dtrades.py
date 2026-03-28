@@ -311,8 +311,8 @@ def d_trades_loss(
     perturb_steps=10,
     distance='l_inf',
     alpha_base=0.5,               # Peso base de entropía (antes: alpha)
-    beta_base=0.5                # Peso base de sensibilidad (antes: beta)
-    gamma=0.25,                    # Peso del término de error de clase en lambda
+    beta_base=0.5,                # Peso base de sensibilidad (antes: beta)
+    gamma=0.25,                   # Peso del término de error de clase en lambda
     normalize_terms=True,         # True: normaliza entropía y sensibilidad locales a [0,1]
     per_sample_sensitivity=True,  # True: cálculo exacto por muestra (loop); False: aproximación por batch
     EPS=1e-12,                    # Estabilidad numérica para log(0) en entropía
