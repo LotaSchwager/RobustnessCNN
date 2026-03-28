@@ -64,7 +64,7 @@ def train_one_epoch(
 
         optimizer.zero_grad(set_to_none=True)
 
-        loss, info = compute_loss_fn(model, data, target, cfg, method_state)
+        loss, info = compute_loss_fn(model, data, target, cfg, method_state, epoch=epoch)
 
         loss.backward()
         optimizer.step()
