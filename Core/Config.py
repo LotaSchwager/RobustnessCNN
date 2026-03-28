@@ -22,7 +22,7 @@ class Config:
         self._num_classes = int(num_classes)
         
         # Hiperparámetros generales de entrenamiento
-        self._batch = 128
+        self._batch = 256
         self._test_batch = 256
         self._weight_decay = 5e-4
         self._lr = 0.1
@@ -38,17 +38,17 @@ class Config:
             #   beta_base : peso base de la sensibilidad local S(x).
             #   gamma     : peso del error acumulado de clase err_c.
             #   rho       : tasa de actualización EMA para las estadísticas por clase.
-            self._alpha_base = 1.0
-            self._beta_base  = 1.0
-            self._gamma      = 0.5
+            self._alpha_base = 0.5
+            self._beta_base  = 0.5
+            self._gamma      = 0.25
             self._rho        = 0.1
         else:
             self._epsilon    = 8/255
             self._num_steps  = 10
             self._step_size  = 2/255
-            self._alpha_base = 1.0
-            self._beta_base  = 1.0
-            self._gamma      = 0.0
+            self._alpha_base = 0.5
+            self._beta_base  = 0.5
+            self._gamma      = 0.25
             self._rho        = 0.1
             
         self._save_freq    = 25
@@ -64,7 +64,7 @@ class Config:
 
         self._use_cuda = bool(cuda) and torch.cuda.is_available()
         self._device   = torch.device("cuda" if self._use_cuda else "cpu")
-        self._kwargs   = {"num_workers": 4, "pin_memory": True} if self._use_cuda else {}
+        self._kwargs   = {"num_workers": 10, "pin_memory": True} if self._use_cuda else {}
 
         torch.manual_seed(self._seed)
         if self._use_cuda:
