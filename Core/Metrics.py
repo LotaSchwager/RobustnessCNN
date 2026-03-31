@@ -5,27 +5,19 @@ import math
 
 class Metrics:
     """
-    Registra y persiste métricas de entrenamiento época a época.
-
-    Métricas generales (todos los métodos):
-        epoch, loss, loss_natural, loss_robust,
-        lambda_min, lambda_max, lambda_mean,
-        acc_natural, acc_robust, robust_drop, attack_success_rate
-
-    Métricas específicas de D-TRADES (opcionales, se incluyen si se pasan):
-        alpha_c_0 … alpha_c_N  — alpha por clase (N = num_classes)
-        beta_c_0  … beta_c_N   — beta  por clase (N = num_classes)
-
-    Las columnas de alpha/beta por clase se añaden dinámicamente en el
-    primer update() que las reciba, por lo que el CSV es siempre correcto
-    aunque el método activo no las use.
+    Registra y persiste métricas de entrenamiento.
+    - Época a época: metricas.csv
+    - Batch a batch: metricas_batch.csv
     """
 
     def __init__(self, results_dir: str):
         self._results_dir = results_dir
         os.makedirs(self._results_dir, exist_ok=True)
 
-        # Métricas universales
+        self._epoch_file = os.path.join(self._results_dir, "metricas.csv")
+        self._batch_file = os.path.join(self._results_dir, "metricas_batch.csv")
+
+        # Variables almacenadas en memoria antes de hacer flush a disco (por época)
         self._epochs_list:        list[int]   = []
         self._lambda_min:         list[float] = []
         self._lambda_max:         list[float] = []
@@ -38,17 +30,9 @@ class Metrics:
         self._robust_drop:        list[float] = []
         self._attack_success_rate:list[float] = []
 
-        # Métricas por clase (D-TRADES) — listas de listas
-        # Cada entrada es una lista de num_classes valores para esa época.
-        # Si el método no las pasa, permanecen vacías y no aparecen en el CSV.
-        self._alpha_per_class: list[list[float]] = []
-        self._beta_per_class:  list[list[float]] = []
-        self._num_classes: int = 0   # se descubre en el primer update con datos
-
     # ------------------------------------------------------------------
-    # Actualización
+    # Actualización Época a Época
     # ------------------------------------------------------------------
-
     def update(
         self,
         epoch:               int,
@@ -62,11 +46,10 @@ class Metrics:
         acc_robust:          float        = 0.0,
         robust_drop:         float        = 0.0,
         attack_success_rate: float        = 0.0,
-        # D-TRADES: alpha y beta por clase (lista de num_classes floats)
-        # Si el método no los usa, se omiten sin problema.
-        alpha_per_class: "list[float] | None" = None,
-        beta_per_class:  "list[float] | None" = None,
     ) -> None:
+        """
+        Almacena métricas de una sola época en memoria temporal hasta el próximo save_metrics().
+        """
         self._epochs_list.append(epoch)
         self._lambda_min.append(lambda_min)
         self._lambda_max.append(lambda_max)
@@ -79,42 +62,42 @@ class Metrics:
         self._robust_drop.append(robust_drop)
         self._attack_success_rate.append(attack_success_rate)
 
-        # alpha/beta por clase (solo D-TRADES)
-        if alpha_per_class is not None:
-            self._alpha_per_class.append(list(alpha_per_class))
-            nc = len(alpha_per_class)
-            if self._num_classes == 0:
-                self._num_classes = nc
-        else:
-            # Marcador vacío para mantener alineación de filas
-            self._alpha_per_class.append([])
+    # ------------------------------------------------------------------
+    # Actualización Batch a Batch
+    # ------------------------------------------------------------------
+    def update_batch(self, epoch: int, batch_stats: list[dict]) -> None:
+        """
+        Persiste directamente a 'metricas_batch.csv' sin guardarlo en memoria.
+        `batch_stats` debe ser una lista de diccionarios, cada uno con al menos:
+        'iteration', 'batch_idx', 'loss', 'loss_natural', 'loss_robust',
+        'lambda_min', 'lambda_mean', 'lambda_max'
+        """
+        file_exists = os.path.isfile(self._batch_file)
+        fieldnames = [
+            "epoch", "iteration", "batch_idx", 
+            "loss", "loss_natural", "loss_robust", 
+            "lambda_min", "lambda_mean", "lambda_max"
+        ]
 
-        if beta_per_class is not None:
-            self._beta_per_class.append(list(beta_per_class))
-        else:
-            self._beta_per_class.append([])
+        with open(self._batch_file, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if not file_exists:
+                writer.writeheader()
+
+            for stat in batch_stats:
+                row = {"epoch": epoch}
+                row.update(stat)  # Agrega la info de su diccionario interno
+                writer.writerow(row)
 
     # ------------------------------------------------------------------
     # Persistencia en CSV
     # ------------------------------------------------------------------
-
     def save_metrics(self) -> None:
         """
-        Guarda todas las métricas en metricas.csv dentro de results_dir.
-
-        Si alpha/beta por clase fueron registrados, el CSV incluirá las
-        columnas  alpha_c_0, alpha_c_1, …, beta_c_0, beta_c_1, …
-        con tantas columnas como clases haya.
-
-        El archivo se abre en modo append para que las reanudaciones de
-        entrenamientos interrumpidos no sobreescriban las épocas previas.
+        Guarda el buffer actual de métricas de época a 'metricas.csv' y limpia 
+        el buffer para evitar duplicación.
         """
-        path = os.path.join(self._results_dir, "metricas.csv")
-        file_exists = os.path.isfile(path)
-
-        nc = self._num_classes
-
-        # Columnas base
+        file_exists = os.path.isfile(self._epoch_file)
         fieldnames = [
             "epoch",
             "loss", "loss_natural", "loss_robust",
@@ -122,12 +105,8 @@ class Metrics:
             "acc_natural", "acc_robust",
             "robust_drop", "attack_success_rate",
         ]
-        # Columnas por clase (D-TRADES) — solo si hay datos
-        if nc > 0:
-            fieldnames += [f"alpha_c_{c}" for c in range(nc)]
-            fieldnames += [f"beta_c_{c}"  for c in range(nc)]
 
-        with open(path, "a", newline="") as f:
+        with open(self._epoch_file, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             if not file_exists:
                 writer.writeheader()
@@ -146,46 +125,19 @@ class Metrics:
                     "robust_drop":         self._robust_drop[i],
                     "attack_success_rate": self._attack_success_rate[i],
                 }
-                # Columnas por clase (pueden estar vacías si el método no las usa)
-                alpha_row = self._alpha_per_class[i] if i < len(self._alpha_per_class) else []
-                beta_row  = self._beta_per_class[i]  if i < len(self._beta_per_class)  else []
-                for c in range(nc):
-                    row[f"alpha_c_{c}"] = alpha_row[c] if c < len(alpha_row) else ""
-                    row[f"beta_c_{c}"]  = beta_row[c]  if c < len(beta_row)  else ""
-
                 writer.writerow(row)
+                
+        # Flush de buffers
+        self._epochs_list.clear()
+        self._lambda_min.clear()
+        self._lambda_max.clear()
+        self._lambda_mean.clear()
+        self._loss_natural.clear()
+        self._loss_robust.clear()
+        self._loss.clear()
+        self._natural_acc.clear()
+        self._robust_acc.clear()
+        self._robust_drop.clear()
+        self._attack_success_rate.clear()
 
-        print(f"[METRICS] Métricas guardadas en: {path}")
-
-    # ------------------------------------------------------------------
-    # Propiedades de lectura
-    # ------------------------------------------------------------------
-
-    @property
-    def epochs_list(self):          return self._epochs_list
-    @property
-    def lambda_min(self):           return self._lambda_min
-    @property
-    def lambda_max(self):           return self._lambda_max
-    @property
-    def lambda_mean(self):          return self._lambda_mean
-    @property
-    def loss_natural(self):         return self._loss_natural
-    @property
-    def loss_robust(self):          return self._loss_robust
-    @property
-    def loss(self):                 return self._loss
-    @property
-    def robust_acc(self):           return self._robust_acc
-    @property
-    def natural_acc(self):          return self._natural_acc
-    @property
-    def robust_drop(self):          return self._robust_drop
-    @property
-    def attack_success_rate(self):  return self._attack_success_rate
-    @property
-    def alpha_per_class(self):      return self._alpha_per_class
-    @property
-    def beta_per_class(self):       return self._beta_per_class
-    @property
-    def num_classes(self):          return self._num_classes
+        print(f"[METRICS] Guardadas con éxito")

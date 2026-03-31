@@ -56,8 +56,8 @@ def train_one_epoch(
     lambda_mins:   list[float] = []
     lambda_maxs:   list[float] = []
     lambda_means:  list[float] = []
-    alpha_per_class_accum: list | None = None   # se rellena si el método lo provee
-    beta_per_class_accum:  list | None = None
+    
+    batch_records: list[dict] = []
 
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
@@ -73,21 +73,32 @@ def train_one_epoch(
         epoch_loss += loss.item() * bs
         seen       += bs
 
-        if "lambda_mean" in info:
-            lambda_means.append(info["lambda_mean"])
-            lambda_mins.append(info["lambda_min"])
-            lambda_maxs.append(info["lambda_max"])
+        # Extraer métricas si el método las devuelve
+        lam_mean = info.get("lambda_mean", float("nan"))
+        lam_min  = info.get("lambda_min", float("nan"))
+        lam_max  = info.get("lambda_max", float("nan"))
+        l_nat    = info.get("loss_natural", 0.0)
+        l_rob    = info.get("loss_robust", 0.0)
 
-        # Acumular alpha/beta por clase si el método los provee (D-TRADES)
-        if "alpha_per_class" in info:
-            if alpha_per_class_accum is None:
-                alpha_per_class_accum = []
-                beta_per_class_accum  = []
-            alpha_per_class_accum.append(info["alpha_per_class"])
-            beta_per_class_accum.append(info["beta_per_class"])
+        if not np.isnan(lam_mean):
+            lambda_means.append(lam_mean)
+            lambda_mins.append(lam_min)
+            lambda_maxs.append(lam_max)
+
+        # Registro para análisis granular (batch a batch)
+        batch_records.append({
+            "iteration": (epoch - 1) * len(train_loader) + batch_idx,
+            "batch_idx": batch_idx,
+            "loss": loss.item(),
+            "loss_natural": l_nat,
+            "loss_robust": l_rob,
+            "lambda_min": lam_min,
+            "lambda_mean": lam_mean,
+            "lambda_max": lam_max,
+        })
 
         if batch_idx % log_interval == 0:
-            lm = f"{np.mean(lambda_means):.4f}" if lambda_means else "n/a"
+            lm = f"{lam_mean:.4f}" if not np.isnan(lam_mean) else "n/a"
             print(
                 f"Train Epoch: {epoch} "
                 f"[{batch_idx * len(data)}/{len(train_loader.dataset)} "
@@ -96,12 +107,7 @@ def train_one_epoch(
                 f"\tλ mean: {lm}"
             )
 
-    # alpha/beta por clase: media a lo largo del epoch si el método los provee
-    extra: dict = {}
-    if alpha_per_class_accum is not None:
-        nc = len(alpha_per_class_accum[0])
-        extra["alpha_per_class"] = [float(np.mean([v[c] for v in alpha_per_class_accum])) for c in range(nc)]
-        extra["beta_per_class"]  = [float(np.mean([v[c] for v in beta_per_class_accum]))  for c in range(nc)]
+    extra = {"batch_records": batch_records}
 
     stats = TrainStats(
         loss         = epoch_loss / seen,
@@ -167,7 +173,6 @@ def run_training(
         eval_stats = evaluator_fn(model, device, test_loader)
 
         # ── Métricas ───────────────────────────────────────────────────────────
-        # alpha/beta por clase: específicos de D-TRADES, None para otros métodos
         metrics.update(
             epoch               = epoch,
             loss                = stats.loss,
@@ -180,9 +185,14 @@ def run_training(
             acc_robust          = eval_stats["robust_acc"],
             robust_drop         = eval_stats["robust_drop"],
             attack_success_rate = eval_stats["attack_success_rate"],
-            alpha_per_class     = stats.extra.get("alpha_per_class"),
-            beta_per_class      = stats.extra.get("beta_per_class"),
         )
+        
+        # Volcar las métricas del batch al CSV dinámico
+        if "batch_records" in stats.extra:
+            metrics.update_batch(epoch, stats.extra["batch_records"])
+
+        # Guardamos en disco al final de cada época
+        metrics.save_metrics()
 
         # ── Resumen por época ──────────────────────────────────────────────────
         lam_str = (
@@ -205,5 +215,3 @@ def run_training(
         # ── Scheduler ──────────────────────────────────────────────────────────
         if scheduler is not None:
             scheduler.step()
-
-    metrics.save_metrics()
