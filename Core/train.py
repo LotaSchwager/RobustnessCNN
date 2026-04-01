@@ -56,8 +56,7 @@ def train_one_epoch(
     lambda_mins:   list[float] = []
     lambda_maxs:   list[float] = []
     lambda_means:  list[float] = []
-    alpha_per_class_accum: list | None = None   # se rellena si el método lo provee
-    beta_per_class_accum:  list | None = None
+
 
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
@@ -78,13 +77,7 @@ def train_one_epoch(
             lambda_mins.append(info["lambda_min"])
             lambda_maxs.append(info["lambda_max"])
 
-        # Acumular alpha/beta por clase si el método los provee (D-TRADES)
-        if "alpha_per_class" in info:
-            if alpha_per_class_accum is None:
-                alpha_per_class_accum = []
-                beta_per_class_accum  = []
-            alpha_per_class_accum.append(info["alpha_per_class"])
-            beta_per_class_accum.append(info["beta_per_class"])
+
 
         if batch_idx % log_interval == 0:
             lm = f"{np.mean(lambda_means):.4f}" if lambda_means else "n/a"
@@ -96,12 +89,7 @@ def train_one_epoch(
                 f"\tλ mean: {lm}"
             )
 
-    # alpha/beta por clase: media a lo largo del epoch si el método los provee
     extra: dict = {}
-    if alpha_per_class_accum is not None:
-        nc = len(alpha_per_class_accum[0])
-        extra["alpha_per_class"] = [float(np.mean([v[c] for v in alpha_per_class_accum])) for c in range(nc)]
-        extra["beta_per_class"]  = [float(np.mean([v[c] for v in beta_per_class_accum]))  for c in range(nc)]
 
     stats = TrainStats(
         loss         = epoch_loss / seen,
@@ -180,8 +168,6 @@ def run_training(
             acc_robust          = eval_stats["robust_acc"],
             robust_drop         = eval_stats["robust_drop"],
             attack_success_rate = eval_stats["attack_success_rate"],
-            alpha_per_class     = stats.extra.get("alpha_per_class"),
-            beta_per_class      = stats.extra.get("beta_per_class"),
         )
 
         # ── Resumen por época ──────────────────────────────────────────────────

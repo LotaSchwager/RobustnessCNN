@@ -69,19 +69,7 @@ def compute_loss(model, x, y, cfg, method_state):
     return loss_total, info
 
 
-# ===========================================================================
-# Funciones de normalización
-# ===========================================================================
 
-@torch.no_grad()
-def _normalize_batch(v, eps=1e-8):
-    """
-    Normaliza un vector [B] al rango [0, 1] usando min-max sobre el batch.
-    eps evita división por cero cuando todos los valores son iguales.
-    """
-    vmin = v.min()
-    vmax = v.max()
-    return (v - vmin) / (vmax - vmin + eps)
 
 
 # ===========================================================================
@@ -253,10 +241,11 @@ def d_trades_loss(
     else:
         # Versión por batch (aproximación): más rápida, menos precisa por muestra.
         x_adv_req = x_adv.detach().clone().requires_grad_(True)
+        # Usamos reduction='sum' para evitar dividir por B (lo que anularía este término con B grande).
         kl_total = F.kl_div(
             F.log_softmax(model(x_adv_req), dim=1),
             probs_nat.detach(),
-            reduction='batchmean'
+            reduction='sum'
         )
         g = torch.autograd.grad(kl_total, x_adv_req, create_graph=False)[0]
         sensitivity = g.view(batch_size, -1).norm(p=2, dim=1)   # [B]

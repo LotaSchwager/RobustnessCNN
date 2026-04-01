@@ -36,12 +36,9 @@ class Config:
             # Hiperparámetros del lambda dinámico adaptativo por clase:
             #   alpha_base: peso base de la entropía local H(x).
             #   beta_base : peso base de la sensibilidad local S(x).
-            #   gamma     : peso del error acumulado de clase err_c.
-            #   rho       : tasa de actualización EMA para las estadísticas por clase.
             self._alpha_base = 1.0
             self._beta_base  = 1.0
             self._gamma      = 1.0
-            self._rho        = 0.1
         else:
             self._epsilon    = 8/255
             self._num_steps  = 10
@@ -49,7 +46,6 @@ class Config:
             self._alpha_base = 1.0
             self._beta_base  = 1.0
             self._gamma      = 0.0
-            self._rho        = 0.1
             
         self._save_freq    = 20
         self._log_interval = 100
@@ -130,8 +126,6 @@ class Config:
     def beta_base(self):   return self._beta_base
     @property
     def gamma(self):       return self._gamma
-    @property
-    def rho(self):         return self._rho
     @property
     def save_freq(self):   return self._save_freq
     @property
