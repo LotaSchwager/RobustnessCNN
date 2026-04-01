@@ -112,7 +112,6 @@ def d_trades_loss(
     gamma         = 1.0,
     weight_floor  = 0.1,
     lam_max       = 3.5,
-    lam_min       = 0.1,
     EPS           = 1e-12,
 ):
     """
@@ -310,8 +309,9 @@ def d_trades_loss(
     # ── Normalización de entropía y sensibilidad ──────────────────────────────
     # Entropía: se normaliza a su valor natural dividiendo por log(C).
     # Sensibilidad: se normaliza usando log1p para mayor estabilidad.
-    entropy_n     = entropy.detach() / math.log(probs_nat.size(1))
-    sensitivity_n = torch.log1p(sensitivity.detach())
+    num_classes = probs_nat.size(1)
+    entropy_n = entropy / torch.log(torch.tensor(num_classes, device=entropy.device))
+    sensitivity_n = torch.log1p(sensitivity)
 
     # ── Ponderador de dificultad adversarial (inspirado en MART) ─────────────
     # (1 - f(x')_y): probabilidad de error sobre la muestra ADVERSARIAL.
@@ -327,15 +327,13 @@ def d_trades_loss(
     # El término gamma*H_n*S_n amplifica extra cuando ambos son altos
     # simultáneamente (muestra incierta Y geométricamente inestable).
     # modulator = 1.0 + beta * sensitivity_n + alpha * entropy_n + gamma * entropy_n * sensitivity_n  # [B]
-    modulator = beta * sensitivity_n + alpha * entropy_n + gamma * entropy_n * sensitivity_n  # [B]
+    modulator = 1 + beta * sensitivity_n + alpha * entropy_n + gamma * entropy_n * sensitivity_n  # [B]
 
     # ── Lambda dinámico final [B] ─────────────────────────────────────────────
     # lambda(x) = clamp( error_weight * modulator, 0, lam_max )
     # Detached: lambda es un peso de muestreo, no un término a optimizar.
     # El modelo optimiza cerrar la brecha clean-adversarial (KL), no reducir H o S.
-    lam = (error_weight * modulator).clamp(max=lam_max, min=lam_min).detach()  # [B]
-
-    lam = lam /(lam.mean() + 1e-8)
+    lam = (error_weight * modulator).clamp(max=lam_max).detach()  # [B]
 
     # ── Pérdida adversarial ponderada ─────────────────────────────────────────
     # L_robust = mean( lambda(x_i) * KL(f(x_i) || f(x_i')) )
