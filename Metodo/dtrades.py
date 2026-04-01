@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -106,11 +107,12 @@ def d_trades_loss(
     epsilon,
     perturb_steps,
     distance      = 'l_inf',
-    alpha         = 0.5,
-    beta          = 0.5,
-    gamma         = 0.0,
+    alpha         = 1.0,
+    beta          = 1.0,
+    gamma         = 1.0,
     weight_floor  = 0.1,
-    lam_max       = 2.0,
+    lam_max       = 3.5,
+    lam_min       = 0.1,
     EPS           = 1e-12,
 ):
     """
@@ -148,12 +150,11 @@ def d_trades_loss(
       (1 + beta*S_n + alpha*H_n + gamma*H_n*S_n)
           Modulador de riesgo compuesto. Amplifica el KL para muestras
           que son simultáneamente inciertas y sensibles.
-            - S_n = S(x) / (mean(S) + eps): sensibilidad normalizada por
-              media. Mide la inestabilidad geométrica local: alta cuando
-              pequeñas perturbaciones de x' cambian mucho la KL.
-            - H_n = H(x) / (mean(H) + eps): entropía normalizada por
-              media. Mide la incertidumbre predictiva: alta cuando el
-              modelo distribuye probabilidad sin concentrarse.
+            - S_n = log1p(S(x)): sensibilidad normalizada usando log1p.
+              Mide la inestabilidad geométrica local de manera más estable,
+              suavizando valores extremos.
+            - H_n = H(x) / log(C): entropía normalizada a su valor máximo
+              teórico. Mide la incertidumbre predictiva en el rango [0, 1].
             - H_n * S_n: término de interacción (gamma=0 lo desactiva).
               Captura el caso extremo: muestra incierta Y sensible, que
               es el escenario más peligroso bajo ataque adversarial.
@@ -173,8 +174,8 @@ def d_trades_loss(
         directamente (lo que colapsa el modelo hacia predicciones artificialmente
         seguras).
 
-      - Normalización por media para S y H: a diferencia de min-max, no
-        colapsa cuando la varianza del batch es baja. Ver _normalize_by_mean.
+      - Normalización natural: H(x) acotado dividiendo por log(C) y
+        S(x) suavizado con log1p para estabilizar los rangos y mantener coherencia.
 
       - f(x')_y en lugar de f(x)_y: elimina el incentivo perverso que causó
         el colapso completo en versiones anteriores.
@@ -306,14 +307,11 @@ def d_trades_loss(
     g = torch.autograd.grad(kl_total, x_adv_req, create_graph=False)[0]
     sensitivity = g.view(batch_size, -1).norm(p=2, dim=1)  # [B]
 
-    # ── Normalización por media (reemplaza min-max) ───────────────────────────
-    # Ambos se normalizan por su media en el batch antes de entrar al modulador.
-    # Esto mantiene los valores en una escala relativa estable batch a batch,
-    # sin el colapso que ocurría con min-max cuando la varianza era baja.
-    # El resultado es un valor relativo: H_n=1.5 significa "50% más incierto
-    # que la media del batch", independientemente de la escala absoluta.
-    entropy_n     = _normalize_by_mean(entropy.detach())     # [B], detached
-    sensitivity_n = _normalize_by_mean(sensitivity.detach()) # [B], detached
+    # ── Normalización de entropía y sensibilidad ──────────────────────────────
+    # Entropía: se normaliza a su valor natural dividiendo por log(C).
+    # Sensibilidad: se normaliza usando log1p para mayor estabilidad.
+    entropy_n     = entropy.detach() / math.log(probs_nat.size(1))
+    sensitivity_n = torch.log1p(sensitivity.detach())
 
     # ── Ponderador de dificultad adversarial (inspirado en MART) ─────────────
     # (1 - f(x')_y): probabilidad de error sobre la muestra ADVERSARIAL.
@@ -328,13 +326,16 @@ def d_trades_loss(
     # Piso en 1: el KL nunca desaparece aunque S y H sean bajos.
     # El término gamma*H_n*S_n amplifica extra cuando ambos son altos
     # simultáneamente (muestra incierta Y geométricamente inestable).
-    modulator = 1.0 + beta * sensitivity_n + alpha * entropy_n + gamma * entropy_n * sensitivity_n  # [B]
+    # modulator = 1.0 + beta * sensitivity_n + alpha * entropy_n + gamma * entropy_n * sensitivity_n  # [B]
+    modulator = beta * sensitivity_n + alpha * entropy_n + gamma * entropy_n * sensitivity_n  # [B]
 
     # ── Lambda dinámico final [B] ─────────────────────────────────────────────
     # lambda(x) = clamp( error_weight * modulator, 0, lam_max )
     # Detached: lambda es un peso de muestreo, no un término a optimizar.
     # El modelo optimiza cerrar la brecha clean-adversarial (KL), no reducir H o S.
-    lam = (error_weight * modulator).clamp(max=lam_max).detach()  # [B]
+    lam = (error_weight * modulator).clamp(max=lam_max, min=lam_min).detach()  # [B]
+
+    lam = lam /(lam.mean() + 1e-8)
 
     # ── Pérdida adversarial ponderada ─────────────────────────────────────────
     # L_robust = mean( lambda(x_i) * KL(f(x_i) || f(x_i')) )
