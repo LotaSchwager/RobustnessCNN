@@ -286,8 +286,8 @@ def d_trades_loss(
 
     # Normalización pura del batch (H_c_mean / H_c_mean.mean()) 
     # Mantiene la magnitud media centrada en 1.0 (o alpha_base/beta_base)
-    alpha_c_norm = (alpha_c / (alpha_c.mean() + 1e-8)) * alpha_base
-    beta_c_norm  = (beta_c  / (beta_c.mean() + 1e-8)) * beta_base
+    alpha_c_norm = ((alpha_c / (alpha_c.mean() + 1e-8)) + 0.5) * alpha_base
+    beta_c_norm  = ((beta_c  / (beta_c.mean() + 1e-8)) + 0.5) * beta_base
 
     # ---------- Construcción de lambda dinámico [B] ----------
     # lambda(x) = alpha_batch_c * H_n(x) + beta_batch_c * S_n(x) + gamma * adv_error
