@@ -22,10 +22,10 @@ class Config:
         self._num_classes = int(num_classes)
         
         # Hiperparámetros generales de entrenamiento
-        self._batch = 128
+        self._batch = 256
         self._test_batch = 256
         self._weight_decay = 5e-4
-        self._lr = 0.1
+        self._lr = 0.2
         self._momentum = 0.9
         
         if method == "d_trades":
@@ -40,7 +40,7 @@ class Config:
             #   rho       : tasa de actualización EMA para las estadísticas por clase.
             self._alpha_base = 1.0
             self._beta_base  = 1.0
-            self._gamma      = 0.5
+            self._gamma      = 1.0
             self._rho        = 0.1
         else:
             self._epsilon    = 8/255

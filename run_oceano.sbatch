@@ -20,12 +20,12 @@
 # [1] CONFIGURACIÓN DEL JOB
 #     Ajusta estos valores según tu experimento.
 # -----------------------------------------------------------------------------
-#SBATCH --J dtrades_cifar100
+#SBATCH -J dtrades_cifar10
 #SBATCH -p GPU
 #SBATCH --qos=normal-gpu
 #SBATCH -n 1
-#SBATCH -c 4
-#SBATCH --mem=16G
+#SBATCH -c 20
+#SBATCH --mem=48G
 ##SBATCH --time=48:00:00
 
 # -----------------------------------------------------------------------------
@@ -91,7 +91,7 @@ echo "[INFO] GPU     : $(python -c 'import torch; print(torch.cuda.get_device_na
 export DATASET="cifar10"           
 export MODEL="resnet18"             
 export METHOD="d_trades"
-export EPOCHS=10
+export EPOCHS=100
 
 # Recuperación ante caídas (Resuming)
 # Si tu job fue cancelado por límite de tiempo de SLURM, descomenta la siguiente
