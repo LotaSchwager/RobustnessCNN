@@ -12,7 +12,13 @@ class Metrics:
         lambda_min, lambda_max, lambda_mean,
         acc_natural, acc_robust, robust_drop, attack_success_rate
 
+    Métricas específicas de D-TRADES (opcionales, se incluyen si se pasan):
+        alpha_c_0 … alpha_c_N  — alpha por clase (N = num_classes)
+        beta_c_0  … beta_c_N   — beta  por clase (N = num_classes)
 
+    Las columnas de alpha/beta por clase se añaden dinámicamente en el
+    primer update() que las reciba, por lo que el CSV es siempre correcto
+    aunque el método activo no las use.
     """
 
     def __init__(self, results_dir: str):
@@ -33,6 +39,14 @@ class Metrics:
         self._attack_success_rate:list[float] = []
 
 
+        self._attack_success_rate:list[float] = []
+
+        # Métricas por clase (D-TRADES) — listas de listas
+        # Cada entrada es una lista de num_classes valores para esa época.
+        # Si el método no las pasa, permanecen vacías y no aparecen en el CSV.
+        self._alpha_per_class: list[list[float]] = []
+        self._beta_per_class:  list[list[float]] = []
+        self._num_classes: int = 0   # se descubre en el primer update con datos
 
     # ------------------------------------------------------------------
     # Actualización
@@ -51,7 +65,10 @@ class Metrics:
         acc_robust:          float        = 0.0,
         robust_drop:         float        = 0.0,
         attack_success_rate: float        = 0.0,
-
+        # D-TRADES: alpha y beta por clase (lista de num_classes floats)
+        # Si el método no los usa, se omiten sin problema.
+        alpha_per_class: "list[float] | None" = None,
+        beta_per_class:  "list[float] | None" = None,
     ) -> None:
         self._epochs_list.append(epoch)
         self._lambda_min.append(lambda_min)
@@ -65,7 +82,20 @@ class Metrics:
         self._robust_drop.append(robust_drop)
         self._attack_success_rate.append(attack_success_rate)
 
+        # alpha/beta por clase (solo D-TRADES)
+        if alpha_per_class is not None:
+            self._alpha_per_class.append(list(alpha_per_class))
+            nc = len(alpha_per_class)
+            if self._num_classes == 0:
+                self._num_classes = nc
+        else:
+            # Marcador vacío para mantener alineación de filas
+            self._alpha_per_class.append([])
 
+        if beta_per_class is not None:
+            self._beta_per_class.append(list(beta_per_class))
+        else:
+            self._beta_per_class.append([])
 
     # ------------------------------------------------------------------
     # Persistencia en CSV
@@ -81,6 +111,8 @@ class Metrics:
         path = os.path.join(self._results_dir, "metricas.csv")
         file_exists = os.path.isfile(path)
 
+        nc = self._num_classes
+
         # Columnas base
         fieldnames = [
             "epoch",
@@ -89,6 +121,10 @@ class Metrics:
             "acc_natural", "acc_robust",
             "robust_drop", "attack_success_rate",
         ]
+        # Columnas por clase (D-TRADES) — solo si hay datos
+        if nc > 0:
+            fieldnames += [f"alpha_c_{c}" for c in range(nc)]
+            fieldnames += [f"beta_c_{c}"  for c in range(nc)]
 
         with open(path, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -109,6 +145,12 @@ class Metrics:
                     "robust_drop":         self._robust_drop[i],
                     "attack_success_rate": self._attack_success_rate[i],
                 }
+                # Columnas por clase (pueden estar vacías si el método no las usa)
+                alpha_row = self._alpha_per_class[i] if i < len(self._alpha_per_class) else []
+                beta_row  = self._beta_per_class[i]  if i < len(self._beta_per_class)  else []
+                for c in range(nc):
+                    row[f"alpha_c_{c}"] = alpha_row[c] if c < len(alpha_row) else ""
+                    row[f"beta_c_{c}"]  = beta_row[c]  if c < len(beta_row)  else ""
 
                 writer.writerow(row)
 
@@ -140,3 +182,9 @@ class Metrics:
     def robust_drop(self):          return self._robust_drop
     @property
     def attack_success_rate(self):  return self._attack_success_rate
+    @property
+    def alpha_per_class(self):      return self._alpha_per_class
+    @property
+    def beta_per_class(self):       return self._beta_per_class
+    @property
+    def num_classes(self):          return self._num_classes

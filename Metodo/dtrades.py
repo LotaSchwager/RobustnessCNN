@@ -48,7 +48,7 @@ def compute_loss(model, x, y, cfg, method_state):
                  - "loss_natural", "loss_robust"
                Cualquier llamante puede ignorar claves que no necesite.
     """
-    loss_total, lam, loss_natural, loss_robust = d_trades_loss(
+    loss_total, lam, loss_natural, loss_robust, alpha_c, beta_c = d_trades_loss(
         model         = model,
         x_natural     = x,
         y             = y,
@@ -65,6 +65,8 @@ def compute_loss(model, x, y, cfg, method_state):
         "lambda_mean":  lam.mean().item(),
         "loss_natural": loss_natural.item(),
         "loss_robust":  loss_robust.item(),
+        "alpha_per_class": alpha_c.tolist(),
+        "beta_per_class":  beta_c.tolist(),
     }
     return loss_total, info
 
@@ -141,6 +143,8 @@ def d_trades_loss(
       lam                 -> Lambda por muestra [B] (detached, para logging).
       loss_natural        -> Pérdida CE limpia (detached, para logging).
       loss_robust_dynamic -> Pérdida robusta ponderada (detached, para logging).
+      alpha_c             -> Valores normalizados de alpha_c por clase (tensor detached 1D).
+      beta_c              -> Valores normalizados de beta_c por clase (tensor detached 1D).
     """
 
     # ---------- Ataque PGD ----------
@@ -265,16 +269,32 @@ def d_trades_loss(
     indices = torch.arange(batch_size, device=y.device)
     adv_error = (1.0 - probs_adv[indices, y]).detach()   # [B]
 
+    # ---------- alpha_c y beta_c locales del batch ----------
+    # Promedios de entropía y sensibilidad por clase en el batch actual.
+    alpha_c = torch.zeros(num_classes, device=y.device)
+    beta_c  = torch.zeros(num_classes, device=y.device)
+
+    for c in range(num_classes):
+        mask = (y == c)
+        if mask.any():
+            alpha_c[c] = entropy_n[mask].mean()
+            beta_c[c]  = sensitivity_n[mask].mean()
+        else:
+            # Fallback a la media total del batch si la clase no está presente
+            alpha_c[c] = entropy_n.mean()
+            beta_c[c]  = sensitivity_n.mean()
+
+    # Normalización pura del batch (H_c_mean / H_c_mean.mean()) 
+    # Mantiene la magnitud media centrada en 1.0 (o alpha_base/beta_base)
+    alpha_c_norm = (alpha_c / (alpha_c.mean() + 1e-8)) * alpha_base
+    beta_c_norm  = (beta_c  / (beta_c.mean() + 1e-8)) * beta_base
+
     # ---------- Construcción de lambda dinámico [B] ----------
-    # lambda(x) = alpha_base * H_n(x) + beta_base * S_n(x) + gamma * adv_error
-    #
-    # Los tres términos son >= 0, así que lambda >= 0 siempre.
-    # La suma garantiza que lambda no colapsa a cero mientras algún
-    # término sea positivo (el modelo no está perfectamente seguro y preciso).
-    # Se detacha: lambda es peso de muestreo, no variable a optimizar.
+    # lambda(x) = alpha_batch_c * H_n(x) + beta_batch_c * S_n(x) + gamma * adv_error
+    # Usamos alpha_base y beta_base modulados por clase (alpha_c_norm, beta_c_norm)
     lam = (
-        alpha_base * entropy_n
-        + beta_base  * sensitivity_n
+        alpha_c_norm[y] * entropy_n
+        + beta_c_norm[y]  * sensitivity_n
         + gamma      * adv_error
     ).detach().clamp(max=lam_max)   # [B]
 
@@ -286,4 +306,4 @@ def d_trades_loss(
     # L = L_CE(f(x), y) + L_robust
     loss_total = loss_natural + loss_robust_dynamic
 
-    return loss_total, lam, loss_natural.detach(), loss_robust_dynamic.detach()
+    return loss_total, lam, loss_natural.detach(), loss_robust_dynamic.detach(), alpha_c_norm.detach(), beta_c_norm.detach()
