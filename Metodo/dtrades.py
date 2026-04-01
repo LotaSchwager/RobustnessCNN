@@ -150,13 +150,17 @@ def d_trades_loss(
 
     x_adv = x_natural.detach() + 0.001 * torch.randn_like(x_natural).detach()
 
+    # Pre-calculamos probabilidades limpias una sola vez para el ataque
+    with torch.no_grad():
+        probs_nat_pgd = F.softmax(model(x_natural), dim=1)
+
     if distance == 'l_inf':
         for _ in range(perturb_steps):
             x_adv.requires_grad_(True)
             with torch.enable_grad():
                 loss_kl = criterion_kl_sum(
                     F.log_softmax(model(x_adv), dim=1),
-                    F.softmax(model(x_natural), dim=1)
+                    probs_nat_pgd
                 )
             grad = torch.autograd.grad(loss_kl, [x_adv])[0]
             x_adv = x_adv.detach() + step_size * torch.sign(grad.detach())
@@ -174,7 +178,7 @@ def d_trades_loss(
             with torch.enable_grad():
                 loss = -criterion_kl_sum(
                     F.log_softmax(model(adv), dim=1),
-                    F.softmax(model(x_natural), dim=1)
+                    probs_nat_pgd
                 )
             loss.backward()
             grad_norms = delta.grad.view(batch_size, -1).norm(p=2, dim=1)
@@ -258,7 +262,8 @@ def d_trades_loss(
     #                Bajo -> el modelo clasifica bien x' (puede relajar lambda).
     # A diferencia del EMA de error, es puramente local al batch actual:
     # no acumula historia, reacciona directamente al estado del modelo ahora.
-    adv_error = (1.0 - probs_adv[torch.arange(batch_size), y]).detach()   # [B]
+    indices = torch.arange(batch_size, device=y.device)
+    adv_error = (1.0 - probs_adv[indices, y]).detach()   # [B]
 
     # ---------- Construcción de lambda dinámico [B] ----------
     # lambda(x) = alpha_base * H_n(x) + beta_base * S_n(x) + gamma * adv_error
