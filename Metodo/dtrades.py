@@ -315,7 +315,6 @@ def d_trades_loss(
     gamma=0.5,                    # Peso del término de error de clase en lambda
     normalize_terms=True,         # True: normaliza entropía y sensibilidad locales a [0,1]
     per_sample_sensitivity=True,  # True: cálculo exacto por muestra (loop); False: aproximación por batch
-    beta_trades=6.0,
     EPS=1e-12,                    # Estabilidad numérica para log(0) en entropía
 ):
     """
@@ -536,8 +535,6 @@ def d_trades_loss(
         + gamma            * err_per_sample
     ).detach()   # [B]
 
-    lam = lam /(lam.mean() + 1e-8)
-    lam = lam * beta_trades
     lam = lam.clamp(0.1, 6.0)
     # ---------- Pérdida robusta ponderada dinámicamente ----------
     # L_RD = mean( lambda(x_i) * KL(f(x_i) || f(x_i + delta)) )
