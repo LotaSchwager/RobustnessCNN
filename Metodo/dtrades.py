@@ -490,9 +490,9 @@ def d_trades_loss(
     num_classes = probs_nat.size(1)
     
     entropy_n = entropy / torch.log(torch.tensor(num_classes, device=entropy.device))
-    #sensitivity_n = torch.log1p(sensitivity)
+    sensitivity_log = torch.log1p(sensitivity)
     #entropy_n = entropy / torch.log(torch.tensor(num_classes, device=entropy.device))
-    sensitivity_n = sensitivity / (sensitivity.mean() + 1e-8)
+    sensitivity_n = sensitivity_log / (sensitivity_log.mean() + 1e-8)
 
     #if normalize_terms:
     #    entropy_n    = _normalize_batch(entropy)      # H(x) normalizado, [B]
@@ -537,7 +537,14 @@ def d_trades_loss(
     ).detach()   # [B]
 
     lam = lam /(lam.mean() + 1e-8)
-    lam = lam * beta_trades
+    
+    kl_mean = kl_per_example.mean().detach()
+    lam = lam * kl_mean
+    #lam = lam * beta_trades
+    
+    #confidence = probs_nat.max(dim=1)[0]
+    #difficulty = 1.0 - confidence
+    
     lam = lam.clamp(0.1, 6.0)
     # ---------- Pérdida robusta ponderada dinámicamente ----------
     # L_RD = mean( lambda(x_i) * KL(f(x_i) || f(x_i + delta)) )

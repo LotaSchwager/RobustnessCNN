@@ -17,7 +17,7 @@ def main():
     model_name   = "resnet18"
 
     # ⚠️ CAMBIA ESTO por tu checkpoint real
-    checkpoint_path = "Resultado/modelo/20260331-194815/d_trades_cifar10_resnet18_final.pt"
+    checkpoint_path = "Resultado/modelo/20260401-200705/d_trades_cifar10_resnet18_final.pt"
 
     # -------------------------
     # 2) DATA
