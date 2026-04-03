@@ -98,33 +98,16 @@ def compute_loss(model, x, y, cfg, method_state: "ClassStats"):
 # ===========================================================================
 
 """
-Normaliza un vector al rango [0, 1] usando min-max sobre el batch completo.
+Normaliza un vector dividiéndolo por su promedio (Ratio-to-Mean).
+Esto es más robusto a outliers que Min-Max y permite que 1.0 signifique "promedio".
 Parámetros:
-  v   -> Tensor 1D de forma [B].
-  eps -> Constante de estabilidad numérica para evitar división por cero
-         cuando todos los valores son iguales (denominador = 0).
-         Valor estándar: 1e-8 (mismo que usa Adam en PyTorch).
-"""
-@torch.no_grad()
-def _normalize_batch(v, eps=1e-8):
-    vmin = v.min()
-    vmax = v.max()
-    return (v - vmin) / (vmax - vmin + eps)
-
-
-"""
-Normaliza un vector al rango [0, 1] usando min-max sobre las clases.
-Se usa para normalizar las estadísticas globales por clase H_c y S_c
-antes de calcular alpha_c y beta_c.
-Parámetros:
-  v   -> Tensor 1D de forma [num_classes], uno por clase.
+  v   -> Tensor 1D de forma [B] o [num_classes].
   eps -> Constante de estabilidad numérica (1e-8 por defecto).
 """
 @torch.no_grad()
-def _normalize_class_stats(v, eps=1e-8):
-    vmin = v.min()
-    vmax = v.max()
-    return (v - vmin) / (vmax - vmin + eps)
+def _normalize_by_mean(v, eps=1e-8):
+    mean = v.mean()
+    return v / (mean + eps)
 
 
 # ===========================================================================
@@ -226,74 +209,33 @@ class ClassStats:
             self.err_c[c] = (1 - self.rho) * self.err_c[c] + self.rho * err_batch
 
     @torch.no_grad()
+    def get_alpha_beta_per_class(self, alpha_base: float, beta_base: float):
+        """
+        Lógica única e interna para calcular alpha_c y beta_c por clase.
+        Usa normalización por media:
+          alpha_c = alpha_base * (H_c / H_mean)
+        Esto es más robusto que min-max y asegura que la clase promedio
+        tenga exactamente el peso base configurado.
+        """
+        H_ratio = _normalize_by_mean(self.H_c)  # [num_classes], 1.0 es el promedio
+        S_ratio = _normalize_by_mean(self.S_c)  # [num_classes], 1.0 es el promedio
+
+        alpha_c = alpha_base * H_ratio
+        beta_c  = beta_base  * S_ratio
+
+        return alpha_c, beta_c
+
+    @torch.no_grad()
     def get_alpha_beta(self, y, alpha_base: float, beta_base: float):
-        """
-        Calcula alpha_c y beta_c adaptativos para cada muestra del batch,
-        usando las estadísticas globales normalizadas de su clase.
-
-        Fórmulas (Opción B — con piso garantizado):
-          alpha_c = alpha_base * (1 + H_c_tilde)   (escala en [alpha_base, 2*alpha_base])
-          beta_c  = beta_base  * (1 + S_c_tilde)   (escala en [beta_base,  2*beta_base])
-
-        Donde H_c_tilde y S_c_tilde son versiones min-max normalizadas
-        de H_c y S_c sobre todas las clases (rango [0, 1]).
-
-        A diferencia de la Opción A (alpha_c = alpha_base * H_tilde_c), aquí
-        ninguna clase puede colapsar a cero: el factor (1 + H_tilde_c) siempre
-        vale al menos 1.0. Esto evita que clases con baja incertidumbre relativa
-        reciban un lambda efectivamente nulo y queden sin defensa adversarial.
-
-        La clase con mayor H_c recibe alpha_c = 2 * alpha_base.
-        La clase con menor H_c recibe alpha_c = alpha_base (no cero).
-        Análogo para beta_c con S_c.
-
-        Parámetros:
-          y          -> Etiquetas verdaderas del batch, forma [B].
-          alpha_base -> Hiperparámetro base para el peso de entropía.
-          beta_base  -> Hiperparámetro base para el peso de sensibilidad.
-
-        Retorna:
-          alpha_per_sample -> Tensor [B] con alpha_c para cada muestra.
-          beta_per_sample  -> Tensor [B] con beta_c para cada muestra.
-        """
-        # Normalizar estadísticas de clase al rango [0, 1] con min-max entre clases
-        # H_tilde_c = (H_c - min_j H_j) / (max_j H_j - min_j H_j + eps)
-        H_tilde = _normalize_class_stats(self.H_c)    # [num_classes], rango [0, 1]
-        S_tilde = _normalize_class_stats(self.S_c)    # [num_classes], rango [0, 1]
-
-        # Opción B: piso garantizado en alpha_base y beta_base.
-        # El (1 + ...) asegura que ninguna clase recibe peso cero,
-        # independientemente de cuán baja sea su incertidumbre o sensibilidad relativa.
-        alpha_c = alpha_base * (0.5 + H_tilde)   # [num_classes], rango [alpha_base, 2*alpha_base]
-        beta_c  = beta_base  * (0.5 + S_tilde)   # [num_classes], rango [beta_base,  2*beta_base]
-
-        # Asignar a cada muestra el valor de su clase correspondiente
-        alpha_per_sample = alpha_c[y]   # [B]
-        beta_per_sample  = beta_c[y]    # [B]
-
-        return alpha_per_sample, beta_per_sample
+        """Asigna los alpha_c y beta_c calculados a cada muestra del batch [B]."""
+        alpha_c, beta_c = self.get_alpha_beta_per_class(alpha_base, beta_base)
+        return alpha_c[y], beta_c[y]
 
     @torch.no_grad()
     def get_alpha_beta_class(self, alpha_base: float, beta_base: float):
-        """
-        Versión por CLASE (no por muestra del batch) de get_alpha_beta().
-
-        Devuelve listas Python de num_classes valores, usando las estadísticas
-        EMA acumuladas hasta este momento. Se llama desde compute_loss() para
-        registrar en Metrics los valores actuales *por clase*, independientemente
-        del batch que se esté procesando.
-
-        Retorna:
-          alpha_class_list : list[float] de longitud num_classes
-          beta_class_list  : list[float] de longitud num_classes
-        """
-        # Misma fórmula Opción B que get_alpha_beta(), pero devuelve listas Python
-        # para que Metrics pueda serializarlas directamente al CSV.
-        H_tilde = _normalize_class_stats(self.H_c)             # [num_classes]
-        S_tilde = _normalize_class_stats(self.S_c)             # [num_classes]
-        alpha_c = (alpha_base * (1.0 + H_tilde)).tolist()      # list[float]
-        beta_c  = (beta_base  * (1.0 + S_tilde)).tolist()      # list[float]
-        return alpha_c, beta_c
+        """Devuelve los valores por clase como listas Python para logging/CSV."""
+        alpha_c, beta_c = self.get_alpha_beta_per_class(alpha_base, beta_base)
+        return alpha_c.tolist(), beta_c.tolist()
 
 
 # ===========================================================================
@@ -312,8 +254,8 @@ def d_trades_loss(
     distance='l_inf',
     alpha_base=1.0,               # Peso base de entropía (antes: alpha)
     beta_base=1.0,                # Peso base de sensibilidad (antes: beta)
-    gamma=0.5,                    # Peso del término de error de clase en lambda
-    normalize_terms=True,         # True: normaliza entropía y sensibilidad locales a [0,1]
+    gamma=1.0,                    # Peso del término de error de clase en lambda
+    normalize_terms=False,         # True: normaliza entropía y sensibilidad locales a [0,1]
     per_sample_sensitivity=True,  # True: cálculo exacto por muestra (loop); False: aproximación por batch
     EPS=1e-12,                    # Estabilidad numérica para log(0) en entropía
 ):
@@ -477,28 +419,14 @@ def d_trades_loss(
         )
         g = torch.autograd.grad(kl_total, x_adv_req, create_graph=False)[0]
         sensitivity = g.view(batch_size, -1).norm(p=2, dim=1)   # [B]
-        sensitivity = torch.log1p(sensitivity)
 
     # ---------- Normalización local de entropía y sensibilidad ----------
-    # Se normalizan al rango [0, 1] usando min-max sobre el batch actual.
-    # Esto evita que la sensibilidad, que puede tomar valores grandes,
-    # domine sobre la entropía, que ya está acotada en [0, log(C)].
-    # La normalización es local (por batch), no global.
-    # Normalización más estable (NO dependiente del batch)
-
+    # Se normalizan de forma acorde a su función:
+    # - Entropía: H / log(num_clases) -> Rango [0, 1] teórico.
+    # - Sensibilidad: S / (mean(S) + eps) -> Escalado relativo al batch.
     num_classes = probs_nat.size(1)
-    
-    entropy_n = entropy / torch.log(torch.tensor(num_classes, device=entropy.device))
-    #sensitivity_n = torch.log1p(sensitivity)
-    #entropy_n = entropy / torch.log(torch.tensor(num_classes, device=entropy.device))
-    sensitivity_n = sensitivity / (sensitivity.mean() + 1e-8)
-
-    #if normalize_terms:
-    #    entropy_n    = _normalize_batch(entropy)      # H(x) normalizado, [B]
-    #    sensitivity_n = _normalize_batch(sensitivity) # S(x) normalizado, [B]
-    #else:
-    #    entropy_n    = entropy
-    #    sensitivity_n = sensitivity
+    entropy_n     = entropy / torch.log(torch.tensor(num_classes, device=entropy.device))
+    sensitivity_n = torch.log1p(sensitivity)
 
     # ---------- Actualización de estadísticas EMA por clase ----------
     # Se actualizan H_c, S_c y err_c usando los valores locales del batch actual.
