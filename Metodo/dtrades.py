@@ -90,8 +90,8 @@ def d_trades_loss(
     beta_base=1.0,                # Peso de S(x) en lambda
     gamma=1.0,                    # Peso del término de error adversarial (1 - p_adv_y)
     per_sample_sensitivity=True,  # True: cálculo exacto por muestra (loop); False: aproximación
-    lam_max=6.0,                  # Techo de lambda
-    lam_min=0.1,                  # Suelo  de lambda
+    lam_max=3.0,                  # Techo de lambda
+    lam_min=0.2,                  # Suelo  de lambda
     EPS=1e-12,                    # Estabilidad numérica para log(0) en entropía
 ):
     """
@@ -285,10 +285,10 @@ def d_trades_loss(
             alpha_c[c] = entropy_n.mean()
             beta_c[c]  = sensitivity_n.mean()
 
-    # Normalización pura del batch (H_c_mean / H_c_mean.mean()) 
-    # Mantiene la magnitud media centrada en 1.0 (o alpha_base/beta_base)
-    alpha_c_norm = ((alpha_c / (alpha_c.mean() + 1e-8)) + 1.0) * alpha_base
-    beta_c_norm  = ((beta_c  / (beta_c.mean() + 1e-8)) + 1.0) * beta_base
+    # Normalización pura del batch (H_c / H_c.mean())
+    # Cada clase queda como ratio respecto a la media inter-clase → centrado ~1.0
+    alpha_c_norm = (alpha_c / (alpha_c.mean() + 1e-8)) * alpha_base
+    beta_c_norm  = (beta_c  / (beta_c.mean() + 1e-8)) * beta_base
 
     # ---------- Construcción de lambda dinámico [B] ----------
     # lambda(x) = alpha_batch_c * H_n(x) + beta_batch_c * S_n(x) + gamma * adv_error
@@ -297,7 +297,9 @@ def d_trades_loss(
         alpha_c_norm[y] * entropy_n
         + beta_c_norm[y]  * sensitivity_n
         + gamma      * adv_error
-        ).detach().clamp(min=lam_min, max=lam_max)   # [B]
+        ).detach()                                    # [B]
+    lam = lam / (lam.mean() + 1e-8)                   # media → 1.0
+    lam = lam.clamp(min=lam_min, max=lam_max)         # relativo: [lam_min, lam_max]
 
     # ---------- Pérdida robusta ponderada ----------
     # L_robust = mean( lambda(x_i) * KL(f(x_i) || f(x_i+delta)) )
