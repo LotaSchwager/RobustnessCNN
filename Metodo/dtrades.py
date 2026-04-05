@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 import torch.optim as optim
+import numpy as np
 
 # ===========================================================================
 # Interfaz pública genérica (registrada en Metodo/__init__.py)
@@ -48,7 +49,7 @@ def compute_loss(model, x, y, cfg, method_state):
                  - "loss_natural", "loss_robust"
                Cualquier llamante puede ignorar claves que no necesite.
     """
-    loss_total, lam, loss_natural, loss_robust, alpha_c, beta_c = d_trades_loss(
+    loss_total, result = d_trades_loss(
         model         = model,
         x_natural     = x,
         y             = y,
@@ -59,16 +60,7 @@ def compute_loss(model, x, y, cfg, method_state):
         beta_base     = cfg.beta_base,
         gamma         = cfg.gamma,
     )
-    info = {
-        "lambda_min":   lam.min().item(),
-        "lambda_max":   lam.max().item(),
-        "lambda_mean":  lam.mean().item(),
-        "loss_natural": loss_natural.item(),
-        "loss_robust":  loss_robust.item(),
-        "alpha_per_class": alpha_c.tolist(),
-        "beta_per_class":  beta_c.tolist(),
-    }
-    return loss_total, info
+    return loss_total, result
 
 
 
@@ -101,28 +93,23 @@ def d_trades_loss(
         L = L_CE(f(x), y)  +  mean( lambda(x_i) * KL(f(x_i) || f(x_i+delta)) )
 
     Construcción de lambda(x):
-        lambda(x) = alpha_base * H_n(x)
-                  + beta_base  * S_n(x)
-                  + gamma      * (1 - f(x')_y)
+        lam_raw(x) = alpha_c * H_n(x) + beta_c * S_n(x) + gamma * (1 - f(x')_y)
+        lambda(x)  = lam_max * sigmoid(lam_raw)
 
     Donde:
         H_n(x)         -> H(x) / log(C): entropía normalizada a [0, 1].
-        S_n(x)         -> log1p(S(x)): sensibilidad suavizada por logaritmo.
+        S_n(x)         -> log1p(S(x)) / mean(log1p(S)): sensibilidad normalizada
+                          (~1.0 centrada), suavizada logarítmicamente.
         (1 - f(x')_y)  -> Probabilidad de error sobre la muestra adversarial x'.
                           Siempre en [0, 1]. Bajo si el modelo clasifica bien
                           bajo ataque (no necesita más presión); alto si falla.
                           Con gamma=0 este término se desactiva.
 
-    Por qué (1 - f(x')_y) en lugar de EMA de error:
-        - Es puramente local al batch: no requiere estado entre pasos.
-        - Siempre acotado en [0, 1], así que aporta a lambda de forma
-          proporcional y no puede dominar artificialmente.
-        - Si el modelo ya clasifica correctamente x' (p_adv_y ≈ 1),
-          (1 - p_adv_y) ≈ 0 y gamma no contribuye: el lambda ya no
-          empuja más. La presión viene solo de H y S en esos casos.
-        - Como H_n, S_n y (1 - p_adv_y) son todos ≥ 0, lambda ≥ 0
-          siempre, y la suma garantiza que nunca colapsa a cero
-          mientras alguno de los tres términos sea positivo.
+    Lambda se acota usando sigmoid * lam_max:
+        - sigmoid mapea cualquier valor real a (0, 1).
+        - Multiplicar por lam_max acota lambda a (0, lam_max).
+        - Se mantiene clamp(min=lam_min) porque sigmoid de valores
+          pequeños/negativos produce valores muy cercanos a 0.
 
     Parámetros:
       model          -> Red neuronal CNN a entrenar.
@@ -136,16 +123,13 @@ def d_trades_loss(
       beta_base      -> Peso de S_n(x) en lambda.
       gamma          -> Peso de (1 - f(x')_y) en lambda. gamma=0 lo desactiva.
       per_sample_sensitivity -> Si True, sensibilidad exacta por muestra (más lento).
-      lam_max        -> Techo absoluto de lambda.
-      EPS            -> Constante para evitar log(0) en entropía.
+      lam_max        -> Techo de lambda (sigmoid * lam_max).
+      lam_min        -> Suelo de lambda (clamp inferior).
+      EPS            -> Constante para estabilidad numérica.
 
     Retorna:
-      loss_total          -> Pérdida total D-TRADES (escalar, con gradiente).
-      lam                 -> Lambda por muestra [B] (detached, para logging).
-      loss_natural        -> Pérdida CE limpia (detached, para logging).
-      loss_robust_dynamic -> Pérdida robusta ponderada (detached, para logging).
-      alpha_c             -> Valores normalizados de alpha_c por clase (tensor detached 1D).
-      beta_c              -> Valores normalizados de beta_c por clase (tensor detached 1D).
+      loss_total -> Pérdida total D-TRADES (escalar, con gradiente).
+      info       -> Dict con métricas detalladas para el sistema de logging.
     """
 
     # ---------- Ataque PGD ----------
@@ -259,14 +243,14 @@ def d_trades_loss(
         g = torch.autograd.grad(kl_total, x_adv_req, create_graph=False)[0]
         sensitivity = g.view(batch_size, -1).norm(p=2, dim=1)   # [B]
 
-    sensitivity_n = torch.log1p(sensitivity)
+    sensitivity_log = torch.log1p(sensitivity)
+    # Normalización de sensibilidad: centrada en ~1.0 dividiendo por la media del batch
+    sensitivity_n = sensitivity_log / (sensitivity_log.mean() + EPS)
 
     # ---------- Error adversarial local (1 - f(x')_y) [B] ----------
     # Probabilidad de que el modelo falle sobre la muestra adversarial x'.
     # Rango: [0, 1]. Alto -> el modelo falla bajo ataque (necesita más presión).
     #                Bajo -> el modelo clasifica bien x' (puede relajar lambda).
-    # A diferencia del EMA de error, es puramente local al batch actual:
-    # no acumula historia, reacciona directamente al estado del modelo ahora.
     indices = torch.arange(batch_size, device=y.device)
     adv_error = (1.0 - probs_adv[indices, y]).detach()   # [B]
 
@@ -291,15 +275,18 @@ def d_trades_loss(
     beta_c_norm  = (beta_c  / (beta_c.mean() + 1e-8)) * beta_base
 
     # ---------- Construcción de lambda dinámico [B] ----------
-    # lambda(x) = alpha_batch_c * H_n(x) + beta_batch_c * S_n(x) + gamma * adv_error
-    # Usamos alpha_base y beta_base modulados por clase (alpha_c_norm, beta_c_norm)
-    lam = (
+    # lam_raw = suma ponderada (pre-sigmoid)
+    # lam     = lam_max * sigmoid(lam_raw) → acotado a (0, lam_max)
+    # Se mantiene clamp(min=lam_min) porque sigmoid cerca de 0 produce valores
+    # muy pequeños que podrían sub-ponderar muestras difíciles.
+    lam_raw = (
         alpha_c_norm[y] * entropy_n
         + beta_c_norm[y]  * sensitivity_n
         + gamma      * adv_error
-        ).detach()                                    # [B]
-    lam = lam / (lam.mean() + 1e-8)                   # media → 1.0
-    lam = lam.clamp(min=lam_min, max=lam_max)         # relativo: [lam_min, lam_max]
+    ).detach()                                          # [B]
+
+    lam = lam_max * torch.sigmoid(lam_raw)              # (0, lam_max)
+    lam = lam.clamp(min=lam_min)                        # [lam_min, lam_max)
 
     # ---------- Pérdida robusta ponderada ----------
     # L_robust = mean( lambda(x_i) * KL(f(x_i) || f(x_i+delta)) )
@@ -309,4 +296,25 @@ def d_trades_loss(
     # L = L_CE(f(x), y) + L_robust
     loss_total = loss_natural + loss_robust_dynamic
 
-    return loss_total, lam, loss_natural.detach(), loss_robust_dynamic.detach(), alpha_c_norm.detach(), beta_c_norm.detach()
+    # ---------- Predicciones para métricas correct/incorrect ----------
+    pred = logits_adv.argmax(dim=1).detach()
+
+    # ---------- Info dict con métricas detalladas ----------
+    info = {
+        # Per-sample arrays (numpy, detached)
+        "lam":          lam.detach().cpu().numpy(),
+        "lam_raw":      lam_raw.detach().cpu().numpy(),
+        "entropy":      entropy_n.detach().cpu().numpy(),
+        "sensitivity":  sensitivity_n.detach().cpu().numpy(),
+        "error":        adv_error.cpu().numpy(),
+        "predictions":  pred.cpu().numpy(),
+        "targets":      y.detach().cpu().numpy(),
+        # Per-class arrays
+        "alpha_per_class": alpha_c_norm.detach().cpu().numpy(),
+        "beta_per_class":  beta_c_norm.detach().cpu().numpy(),
+        # Scalar losses
+        "loss_natural":    loss_natural.item(),
+        "loss_robust":     loss_robust_dynamic.item(),
+    }
+
+    return loss_total, info

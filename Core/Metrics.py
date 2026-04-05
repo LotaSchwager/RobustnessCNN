@@ -1,190 +1,249 @@
 import os
 import csv
 import math
+import numpy as np
+
+
+def _safe_corrcoef(a, b):
+    """Correlación de Pearson segura; devuelve NaN si algún vector es constante."""
+    if len(a) < 2 or np.std(a) < 1e-12 or np.std(b) < 1e-12:
+        return float("nan")
+    return float(np.corrcoef(a, b)[0, 1])
+
+
+def _stats(arr):
+    """Devuelve dict con std, mean, min, max de un array numpy 1-D."""
+    if len(arr) == 0:
+        return {"std": float("nan"), "mean": float("nan"),
+                "min": float("nan"), "max": float("nan")}
+    return {
+        "std":  float(np.std(arr)),
+        "mean": float(np.mean(arr)),
+        "min":  float(np.min(arr)),
+        "max":  float(np.max(arr)),
+    }
 
 
 class Metrics:
     """
-    Registra y persiste métricas de entrenamiento época a época.
+    Sistema de métricas detallado para D-TRADES.
 
-    Métricas generales (todos los métodos):
-        epoch, loss, loss_natural, loss_robust,
-        lambda_min, lambda_max, lambda_mean,
-        acc_natural, acc_robust, robust_drop, attack_success_rate
+    Genera dos archivos CSV:
+      • batch_metrics.csv  — una fila por cada batch (granularidad fina).
+      • epoch_metrics.csv  — una fila por época (promedios de los batches).
 
-    Métricas específicas de D-TRADES (opcionales, se incluyen si se pasan):
-        alpha_c_0 … alpha_c_N  — alpha por clase (N = num_classes)
-        beta_c_0  … beta_c_N   — beta  por clase (N = num_classes)
-
-    Las columnas de alpha/beta por clase se añaden dinámicamente en el
-    primer update() que las reciba, por lo que el CSV es siempre correcto
-    aunque el método activo no las use.
+    Métricas registradas:
+      - Lambda final (post-sigmoid):   std, mean, min, max
+      - Lambda raw   (pre-sigmoid):    std, mean, min, max
+      - H  (entropía normalizada):     std, mean, min, max
+      - S  (sensibilidad normalizada): std, mean, min, max
+      - Error (1 - f(x')_y):           std, mean, min, max
+      - Alpha por clase:               std, mean, min, max
+      - Beta  por clase:               std, mean, min, max
+      - Correlaciones:  corr(λ, S),  corr(λ, H),  corr(λ, error)
+      - Métricas por tipo de muestra:  lam_correct, lam_incorrect
+      - Efectividad:  corrcoef(λ, error_adv)
+      - loss_natural, loss_robust
     """
+
+    # Columnas en orden para ambos CSV
+    _FIELDNAMES = [
+        "identifier",
+        # Lambda final
+        "lam_std", "lam_mean", "lam_min", "lam_max",
+        # Lambda raw (pre-sigmoid)
+        "lam_raw_std", "lam_raw_mean", "lam_raw_min", "lam_raw_max",
+        # Entropía
+        "H_std", "H_mean", "H_min", "H_max",
+        # Sensibilidad
+        "S_std", "S_mean", "S_min", "S_max",
+        # Error adversarial
+        "error_std", "error_mean", "error_min", "error_max",
+        # Alpha por clase
+        "alpha_std", "alpha_mean", "alpha_min", "alpha_max",
+        # Beta por clase
+        "beta_std", "beta_mean", "beta_min", "beta_max",
+        # Correlaciones de lambda con componentes
+        "corr_lam_sensitivity", "corr_lam_entropy", "corr_lam_error",
+        # Métricas por tipo de muestra
+        "lam_correct_mean", "lam_incorrect_mean",
+        # Efectividad
+        "effectiveness",
+        # Losses
+        "loss_natural", "loss_robust",
+    ]
 
     def __init__(self, results_dir: str):
         self._results_dir = results_dir
         os.makedirs(self._results_dir, exist_ok=True)
 
-        # Métricas universales
-        self._epochs_list:        list[int]   = []
-        self._lambda_min:         list[float] = []
-        self._lambda_max:         list[float] = []
-        self._lambda_mean:        list[float] = []
-        self._loss_natural:       list[float] = []
-        self._loss_robust:        list[float] = []
-        self._loss:               list[float] = []
-        self._natural_acc:        list[float] = []
-        self._robust_acc:         list[float] = []
-        self._robust_drop:        list[float] = []
-        self._attack_success_rate:list[float] = []
+        self._batch_csv = os.path.join(self._results_dir, "batch_metrics.csv")
+        self._epoch_csv = os.path.join(self._results_dir, "epoch_metrics.csv")
 
+        # Escribir headers si los archivos no existen
+        for path in (self._batch_csv, self._epoch_csv):
+            if not os.path.isfile(path):
+                with open(path, "w", newline="") as f:
+                    csv.DictWriter(f, fieldnames=self._FIELDNAMES).writeheader()
 
-        self._attack_success_rate:list[float] = []
-
-        # Métricas por clase (D-TRADES) — listas de listas
-        # Cada entrada es una lista de num_classes valores para esa época.
-        # Si el método no las pasa, permanecen vacías y no aparecen en el CSV.
-        self._alpha_per_class: list[list[float]] = []
-        self._beta_per_class:  list[list[float]] = []
-        self._num_classes: int = 0   # se descubre en el primer update con datos
+        # Acumuladores para el promedio por época
+        self._epoch_batches: list[dict] = []
+        self._current_epoch: int = 0
 
     # ------------------------------------------------------------------
-    # Actualización
+    # API pública
     # ------------------------------------------------------------------
 
-    def update(
-        self,
-        epoch:               int,
-        loss:                float,
-        loss_natural:        float        = 0.0,
-        loss_robust:         float        = 0.0,
-        lambda_min:          float        = math.nan,
-        lambda_max:          float        = math.nan,
-        lambda_mean:         float        = math.nan,
-        acc_natural:         float        = 0.0,
-        acc_robust:          float        = 0.0,
-        robust_drop:         float        = 0.0,
-        attack_success_rate: float        = 0.0,
-        # D-TRADES: alpha y beta por clase (lista de num_classes floats)
-        # Si el método no los usa, se omiten sin problema.
-        alpha_per_class: "list[float] | None" = None,
-        beta_per_class:  "list[float] | None" = None,
-    ) -> None:
-        self._epochs_list.append(epoch)
-        self._lambda_min.append(lambda_min)
-        self._lambda_max.append(lambda_max)
-        self._lambda_mean.append(lambda_mean)
-        self._loss_natural.append(loss_natural)
-        self._loss_robust.append(loss_robust)
-        self._loss.append(loss)
-        self._natural_acc.append(acc_natural)
-        self._robust_acc.append(acc_robust)
-        self._robust_drop.append(robust_drop)
-        self._attack_success_rate.append(attack_success_rate)
-
-        # alpha/beta por clase (solo D-TRADES)
-        if alpha_per_class is not None:
-            self._alpha_per_class.append(list(alpha_per_class))
-            nc = len(alpha_per_class)
-            if self._num_classes == 0:
-                self._num_classes = nc
-        else:
-            # Marcador vacío para mantener alineación de filas
-            self._alpha_per_class.append([])
-
-        if beta_per_class is not None:
-            self._beta_per_class.append(list(beta_per_class))
-        else:
-            self._beta_per_class.append([])
-
-    # ------------------------------------------------------------------
-    # Persistencia en CSV
-    # ------------------------------------------------------------------
-
-    def save_metrics(self) -> None:
+    def record_batch(self, epoch: int, batch_idx: int, info: dict) -> None:
         """
-        Guarda todas las métricas en metricas.csv dentro de results_dir.
+        Registra las métricas de un solo batch y las escribe al CSV de batch.
 
-        El archivo se abre en modo append para que las reanudaciones de
-        entrenamientos interrumpidos no sobreescriban las épocas previas.
+        Parámetros
+        ----------
+        epoch     : número de la época actual.
+        batch_idx : índice del batch dentro de la época.
+        info      : dict devuelto por dtrades.compute_loss con arrays numpy.
         """
-        path = os.path.join(self._results_dir, "metricas.csv")
-        file_exists = os.path.isfile(path)
+        # Si cambió la época, resetear acumuladores
+        if epoch != self._current_epoch:
+            self._epoch_batches = []
+            self._current_epoch = epoch
 
-        nc = self._num_classes
+        row = self._compute_row(
+            identifier=f"batch_{batch_idx}_epoca_{epoch}",
+            info=info,
+        )
 
-        # Columnas base
-        fieldnames = [
-            "epoch",
-            "loss", "loss_natural", "loss_robust",
-            "lambda_min", "lambda_max", "lambda_mean",
-            "acc_natural", "acc_robust",
-            "robust_drop", "attack_success_rate",
-        ]
-        # Columnas por clase (D-TRADES) — solo si hay datos
-        if nc > 0:
-            fieldnames += [f"alpha_c_{c}" for c in range(nc)]
-            fieldnames += [f"beta_c_{c}"  for c in range(nc)]
+        self._epoch_batches.append(row)
+        self._write_row(self._batch_csv, row)
 
+    def record_epoch(self, epoch: int, **extra_kwargs) -> None:
+        """
+        Promedia las métricas de todos los batches de la época y escribe
+        una fila en el CSV de épocas.
+
+        Parámetros adicionales (acc_natural, acc_robust, etc.) se ignoran
+        aquí pero podrían extenderse en el futuro.
+        """
+        if not self._epoch_batches:
+            return
+
+        avg_row: dict = {"identifier": f"epoca_{epoch}"}
+
+        # Promediar todas las columnas numéricas
+        numeric_keys = [k for k in self._FIELDNAMES if k != "identifier"]
+        for key in numeric_keys:
+            vals = [b[key] for b in self._epoch_batches
+                    if key in b and not _is_nan(b[key])]
+            avg_row[key] = float(np.mean(vals)) if vals else float("nan")
+
+        self._write_row(self._epoch_csv, avg_row)
+        self._epoch_batches = []
+
+        print(f"[METRICS] Métricas época {epoch} guardadas en: {self._results_dir}")
+
+    # ------------------------------------------------------------------
+    # Internos
+    # ------------------------------------------------------------------
+
+    def _compute_row(self, identifier: str, info: dict) -> dict:
+        """Calcula todas las estadísticas a partir del info dict de un batch."""
+        lam         = info["lam"]
+        lam_raw     = info["lam_raw"]
+        entropy     = info["entropy"]
+        sensitivity = info["sensitivity"]
+        error       = info["error"]
+        predictions = info["predictions"]
+        targets     = info["targets"]
+        alpha_pc    = info["alpha_per_class"]
+        beta_pc     = info["beta_per_class"]
+
+        # Estadísticas básicas
+        lam_s    = _stats(lam)
+        lamr_s   = _stats(lam_raw)
+        h_s      = _stats(entropy)
+        s_s      = _stats(sensitivity)
+        err_s    = _stats(error)
+        alpha_s  = _stats(alpha_pc)
+        beta_s   = _stats(beta_pc)
+
+        # Correlaciones de lambda con sus componentes
+        corr_lam_sens   = _safe_corrcoef(lam, sensitivity)
+        corr_lam_ent    = _safe_corrcoef(lam, entropy)
+        corr_lam_err    = _safe_corrcoef(lam, error)
+
+        # Métricas por tipo de muestra (correct vs incorrect)
+        correct_mask   = (predictions == targets)
+        incorrect_mask = ~correct_mask
+
+        lam_correct   = float(np.mean(lam[correct_mask]))   if correct_mask.any()   else float("nan")
+        lam_incorrect = float(np.mean(lam[incorrect_mask])) if incorrect_mask.any() else float("nan")
+
+        # Efectividad: corrcoef(lambda, error_adv)
+        effectiveness = _safe_corrcoef(lam, error)
+
+        row = {
+            "identifier":           identifier,
+            # Lambda final
+            "lam_std":              lam_s["std"],
+            "lam_mean":             lam_s["mean"],
+            "lam_min":              lam_s["min"],
+            "lam_max":              lam_s["max"],
+            # Lambda raw
+            "lam_raw_std":          lamr_s["std"],
+            "lam_raw_mean":         lamr_s["mean"],
+            "lam_raw_min":          lamr_s["min"],
+            "lam_raw_max":          lamr_s["max"],
+            # Entropía
+            "H_std":                h_s["std"],
+            "H_mean":               h_s["mean"],
+            "H_min":                h_s["min"],
+            "H_max":                h_s["max"],
+            # Sensibilidad
+            "S_std":                s_s["std"],
+            "S_mean":               s_s["mean"],
+            "S_min":                s_s["min"],
+            "S_max":                s_s["max"],
+            # Error
+            "error_std":            err_s["std"],
+            "error_mean":           err_s["mean"],
+            "error_min":            err_s["min"],
+            "error_max":            err_s["max"],
+            # Alpha por clase
+            "alpha_std":            alpha_s["std"],
+            "alpha_mean":           alpha_s["mean"],
+            "alpha_min":            alpha_s["min"],
+            "alpha_max":            alpha_s["max"],
+            # Beta por clase
+            "beta_std":             beta_s["std"],
+            "beta_mean":            beta_s["mean"],
+            "beta_min":             beta_s["min"],
+            "beta_max":             beta_s["max"],
+            # Correlaciones
+            "corr_lam_sensitivity": corr_lam_sens,
+            "corr_lam_entropy":     corr_lam_ent,
+            "corr_lam_error":       corr_lam_err,
+            # Correct/Incorrect
+            "lam_correct_mean":     lam_correct,
+            "lam_incorrect_mean":   lam_incorrect,
+            # Efectividad
+            "effectiveness":        effectiveness,
+            # Losses
+            "loss_natural":         info.get("loss_natural", float("nan")),
+            "loss_robust":          info.get("loss_robust",  float("nan")),
+        }
+        return row
+
+    def _write_row(self, path: str, row: dict) -> None:
+        """Escribe una fila al CSV especificado (modo append)."""
         with open(path, "a", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            if not file_exists:
-                writer.writeheader()
+            writer = csv.DictWriter(f, fieldnames=self._FIELDNAMES)
+            writer.writerow(row)
 
-            for i in range(len(self._loss)):
-                row: dict = {
-                    "epoch":               self._epochs_list[i],
-                    "loss":                self._loss[i],
-                    "loss_natural":        self._loss_natural[i],
-                    "loss_robust":         self._loss_robust[i],
-                    "lambda_min":          self._lambda_min[i],
-                    "lambda_max":          self._lambda_max[i],
-                    "lambda_mean":         self._lambda_mean[i],
-                    "acc_natural":         self._natural_acc[i],
-                    "acc_robust":          self._robust_acc[i],
-                    "robust_drop":         self._robust_drop[i],
-                    "attack_success_rate": self._attack_success_rate[i],
-                }
-                # Columnas por clase (pueden estar vacías si el método no las usa)
-                alpha_row = self._alpha_per_class[i] if i < len(self._alpha_per_class) else []
-                beta_row  = self._beta_per_class[i]  if i < len(self._beta_per_class)  else []
-                for c in range(nc):
-                    row[f"alpha_c_{c}"] = alpha_row[c] if c < len(alpha_row) else ""
-                    row[f"beta_c_{c}"]  = beta_row[c]  if c < len(beta_row)  else ""
 
-                writer.writerow(row)
-
-        print(f"[METRICS] Métricas guardadas en: {path}")
-
-    # ------------------------------------------------------------------
-    # Propiedades de lectura
-    # ------------------------------------------------------------------
-
-    @property
-    def epochs_list(self):          return self._epochs_list
-    @property
-    def lambda_min(self):           return self._lambda_min
-    @property
-    def lambda_max(self):           return self._lambda_max
-    @property
-    def lambda_mean(self):          return self._lambda_mean
-    @property
-    def loss_natural(self):         return self._loss_natural
-    @property
-    def loss_robust(self):          return self._loss_robust
-    @property
-    def loss(self):                 return self._loss
-    @property
-    def robust_acc(self):           return self._robust_acc
-    @property
-    def natural_acc(self):          return self._natural_acc
-    @property
-    def robust_drop(self):          return self._robust_drop
-    @property
-    def attack_success_rate(self):  return self._attack_success_rate
-    @property
-    def alpha_per_class(self):      return self._alpha_per_class
-    @property
-    def beta_per_class(self):       return self._beta_per_class
-    @property
-    def num_classes(self):          return self._num_classes
+def _is_nan(val) -> bool:
+    """Comprueba si un valor es NaN (seguro para int/str)."""
+    try:
+        return math.isnan(val)
+    except (TypeError, ValueError):
+        return False

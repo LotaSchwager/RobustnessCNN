@@ -36,6 +36,7 @@ def train_one_epoch(
     cfg,                                # Config (solo lectura)
     method_state,                       # estado mutable del método (o None)
     epoch:          int,
+    metrics,                            # instancia de Metrics
     log_interval:   int = 100,
 ) -> TrainStats:
     """
@@ -44,20 +45,14 @@ def train_one_epoch(
     compute_loss_fn debe tener la firma:
         fn(model, x, y, cfg, method_state) -> (loss_tensor, info_dict)
 
-    info_dict puede contener cualquier subconjunto de:
-        lambda_min, lambda_max, lambda_mean, loss_natural, loss_robust
-
-    Los campos ausentes se reemplazan por 0.0 / NaN en TrainStats sin fallar.
+    info_dict contiene arrays numpy per-sample y estadísticas que se
+    pasan directamente a metrics.record_batch().
     """
     model.train()
 
     seen           = 0
     epoch_loss     = 0.0
-    lambda_mins:   list[float] = []
-    lambda_maxs:   list[float] = []
     lambda_means:  list[float] = []
-    alpha_per_class_accum: list | None = None
-    beta_per_class_accum:  list | None = None
 
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
@@ -73,17 +68,10 @@ def train_one_epoch(
         epoch_loss += loss.item() * bs
         seen       += bs
 
-        if "lambda_mean" in info:
-            lambda_means.append(info["lambda_mean"])
-            lambda_mins.append(info["lambda_min"])
-            lambda_maxs.append(info["lambda_max"])
-
-        if "alpha_per_class" in info:
-            if alpha_per_class_accum is None:
-                alpha_per_class_accum = []
-                beta_per_class_accum  = []
-            alpha_per_class_accum.append(info["alpha_per_class"])
-            beta_per_class_accum.append(info["beta_per_class"])
+        # ── Registrar métricas por batch ───────────────────────────────────
+        if "lam" in info:
+            metrics.record_batch(epoch, batch_idx, info)
+            lambda_means.append(float(np.mean(info["lam"])))
 
         if batch_idx % log_interval == 0:
             lm = f"{np.mean(lambda_means):.4f}" if lambda_means else "n/a"
@@ -95,20 +83,23 @@ def train_one_epoch(
                 f"\tλ mean: {lm}"
             )
 
-    extra: dict = {}
-    if alpha_per_class_accum is not None:
-        nc = len(alpha_per_class_accum[0])
-        extra["alpha_per_class"] = [float(np.mean([v[c] for v in alpha_per_class_accum])) for c in range(nc)]
-        extra["beta_per_class"]  = [float(np.mean([v[c] for v in beta_per_class_accum]))  for c in range(nc)]
+    # Resumen de la época para TrainStats (retrocompatibilidad)
+    lam_min  = float("nan")
+    lam_max  = float("nan")
+    lam_mean = float("nan")
+    if lambda_means:
+        lam_mean = float(np.mean(lambda_means))
+        # min/max se estiman de los promedios por batch (aproximación razonable)
+        lam_min  = float(np.min(lambda_means))
+        lam_max  = float(np.max(lambda_means))
 
     stats = TrainStats(
         loss         = epoch_loss / seen,
         natural_loss = 0.0,
         robust_loss  = 0.0,
-        lambda_min   = float(np.min(lambda_mins))  if lambda_mins  else float("nan"),
-        lambda_max   = float(np.max(lambda_maxs))  if lambda_maxs  else float("nan"),
-        lambda_mean  = float(np.mean(lambda_means)) if lambda_means else float("nan"),
-        extra        = extra,
+        lambda_min   = lam_min,
+        lambda_max   = lam_max,
+        lambda_mean  = lam_mean,
     )
     return stats
 
@@ -158,29 +149,15 @@ def run_training(
             cfg              = cfg,
             method_state     = method_state,
             epoch            = epoch,
+            metrics          = metrics,
             log_interval     = cfg.log_interval,
         )
 
         # ── Evaluación ─────────────────────────────────────────────────────────
         eval_stats = evaluator_fn(model, device, test_loader)
 
-        # ── Métricas ───────────────────────────────────────────────────────────
-        # alpha/beta por clase: específicos de D-TRADES, None para otros métodos
-        metrics.update(
-            epoch               = epoch,
-            loss                = stats.loss,
-            loss_natural        = stats.natural_loss,
-            loss_robust         = stats.robust_loss,
-            lambda_min          = stats.lambda_min,
-            lambda_max          = stats.lambda_max,
-            lambda_mean         = stats.lambda_mean,
-            acc_natural         = eval_stats["natural_acc"],
-            acc_robust          = eval_stats["robust_acc"],
-            robust_drop         = eval_stats["robust_drop"],
-            attack_success_rate = eval_stats["attack_success_rate"],
-            alpha_per_class     = stats.extra.get("alpha_per_class"),
-            beta_per_class      = stats.extra.get("beta_per_class"),
-        )
+        # ── Métricas por época (promedios de batches) ──────────────────────────
+        metrics.record_epoch(epoch)
 
         # ── Resumen por época ──────────────────────────────────────────────────
         lam_str = (
@@ -203,5 +180,3 @@ def run_training(
         # ── Scheduler ──────────────────────────────────────────────────────────
         if scheduler is not None:
             scheduler.step()
-
-    metrics.save_metrics()
