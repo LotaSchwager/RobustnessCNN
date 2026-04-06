@@ -83,7 +83,7 @@ def d_trades_loss(
     gamma=1.0,                    # Peso del término de error adversarial (1 - p_adv_y)
     per_sample_sensitivity=False,  # True: cálculo exacto por muestra (loop); False: aproximación
     lam_max=3.0,                  # Techo de lambda
-    lam_min=0.2,                  # Suelo  de lambda
+    lam_min=0.1,                  # Suelo  de lambda
     EPS=1e-12,                    # Estabilidad numérica para log(0) en entropía
 ):
     """
@@ -94,7 +94,7 @@ def d_trades_loss(
 
     Construcción de lambda(x):
         lam_raw(x) = alpha_c * H_n(x) + beta_c * S_n(x) + gamma * (1 - f(x')_y)
-        lambda(x)  = lam_max * sigmoid(lam_raw)
+        lambda(x)  = softplus(lam_raw).clamp(min=lam_min, max=lam_max)
 
     Donde:
         H_n(x)         -> H(x) / log(C): entropía normalizada a [0, 1].
@@ -105,11 +105,9 @@ def d_trades_loss(
                           bajo ataque (no necesita más presión); alto si falla.
                           Con gamma=0 este término se desactiva.
 
-    Lambda se acota usando sigmoid * lam_max:
-        - sigmoid mapea cualquier valor real a (0, 1).
-        - Multiplicar por lam_max acota lambda a (0, lam_max).
-        - Se mantiene clamp(min=lam_min) porque sigmoid de valores
-          pequeños/negativos produce valores muy cercanos a 0.
+    Lambda se calcula usando softplus acotado por [lam_min, lam_max]:
+        - softplus(x) mapea reales a (0, inf).
+        - Se acota con clamp para evitar explosión o anulación.
 
     Parámetros:
       model          -> Red neuronal CNN a entrenar.
@@ -275,18 +273,16 @@ def d_trades_loss(
     beta_c_norm  = (beta_c  / (beta_c.mean() + 1e-8)) * beta_base
 
     # ---------- Construcción de lambda dinámico [B] ----------
-    # lam_raw = suma ponderada (pre-sigmoid)
-    # lam     = lam_max * sigmoid(lam_raw) → acotado a (0, lam_max)
-    # Se mantiene clamp(min=lam_min) porque sigmoid cerca de 0 produce valores
-    # muy pequeños que podrían sub-ponderar muestras difíciles.
+    # lam_raw = suma ponderada (para softplus)
+    # lam     = softplus(lam_raw) → [lam_min, lam_max]
+    # Se usa clamp para asegurar estabilidad y evitar sub-ponderar muestras difíciles.
     lam_raw = (
         alpha_c_norm[y] * entropy_n
         + beta_c_norm[y]  * sensitivity_n
         + gamma      * adv_error
     ).detach()                                          # [B]
 
-    lam = lam_max * torch.sigmoid(lam_raw)              # (0, lam_max)
-    lam = lam.clamp(min=lam_min)                        # [lam_min, lam_max)
+    lam = F.softplus(lam_raw).clamp(min=lam_min, max=lam_max)   # [lam_min, lam_max]
 
     # ---------- Pérdida robusta ponderada ----------
     # L_robust = mean( lambda(x_i) * KL(f(x_i) || f(x_i+delta)) )
