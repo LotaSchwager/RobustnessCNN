@@ -81,7 +81,7 @@ def d_trades_loss(
     alpha_base=1.0,               # Peso de H(x) en lambda
     beta_base=1.0,                # Peso de S(x) en lambda
     gamma=1.0,                    # Peso del término de error adversarial (1 - p_adv_y)
-    per_sample_sensitivity=True,  # True: cálculo exacto por muestra (loop); False: aproximación
+    per_sample_sensitivity=False,  # True: cálculo exacto por muestra (loop); False: aproximación
     lam_max=3.0,                  # Techo de lambda
     lam_min=0.2,                  # Suelo  de lambda
     EPS=1e-12,                    # Estabilidad numérica para log(0) en entropía
