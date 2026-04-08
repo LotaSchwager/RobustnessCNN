@@ -37,8 +37,8 @@
 #SBATCH --error=logs/%x_%j.err
 
 # Notificación por correo (descomenta y configura si quieres recibirla)
-##SBATCH --mail-type=BEGIN,END,FAIL
-##SBATCH --mail-user=tu.correo@pucv.cl
+##SBATCH --mail-type=ALL
+##SBATCH --mail-user=ademir.munoz.r@mail.pucv.cl
 
 # =============================================================================
 # INICIO

@@ -36,7 +36,7 @@ def main():
     data_cfg = DataConfig(
         name            = dataset_name,
         root            = "./data",
-        batch_size      = 256,
+        batch_size      = 128,
         test_batch_size = 256,
         num_workers     = 10,
         use_cuda        = True,
