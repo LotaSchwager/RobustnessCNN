@@ -33,16 +33,11 @@ class Metrics:
       • epoch_metrics.csv  — una fila por época (promedios de los batches).
 
     Métricas registradas:
-      - Lambda final (post-sigmoid):   std, mean, min, max
-      - Lambda raw   (pre-sigmoid):    std, mean, min, max
-      - H  (entropía normalizada):     std, mean, min, max
-      - S  (sensibilidad normalizada): std, mean, min, max
-      - Error (1 - f(x')_y):           std, mean, min, max
-      - Alpha por clase:               std, mean, min, max
-      - Beta  por clase:               std, mean, min, max
-      - Correlaciones:  corr(λ, S),  corr(λ, H),  corr(λ, error)
-      - Métricas por tipo de muestra:  lam_correct, lam_incorrect
-      - Efectividad:  corrcoef(λ, error_adv)
+      - Lambda (peso dinámico):          std, mean, min, max
+      - H  (entropía normalizada):       std, mean, min, max
+      - S  (sensibilidad normalizada):   std, mean, min, max
+      - Correlaciones:  corr(λ, S),  corr(λ, H)
+      - Métricas por tipo de muestra:    lam_correct, lam_incorrect
       - loss_natural, loss_robust
     """
 
@@ -51,24 +46,14 @@ class Metrics:
         "identifier",
         # Lambda final
         "lam_std", "lam_mean", "lam_min", "lam_max",
-        # Lambda raw (pre-sigmoid)
-        "lam_raw_std", "lam_raw_mean", "lam_raw_min", "lam_raw_max",
         # Entropía
         "H_std", "H_mean", "H_min", "H_max",
         # Sensibilidad
         "S_std", "S_mean", "S_min", "S_max",
-        # Error adversarial
-        "error_std", "error_mean", "error_min", "error_max",
-        # Alpha por clase
-        "alpha_std", "alpha_mean", "alpha_min", "alpha_max",
-        # Beta por clase
-        "beta_std", "beta_mean", "beta_min", "beta_max",
         # Correlaciones de lambda con componentes
-        "corr_lam_sensitivity", "corr_lam_entropy", "corr_lam_error",
+        "corr_lam_sensitivity", "corr_lam_entropy",
         # Métricas por tipo de muestra
         "lam_correct_mean", "lam_incorrect_mean",
-        # Efectividad
-        "effectiveness",
         # Losses
         "loss_natural", "loss_robust",
     ]
@@ -149,28 +134,19 @@ class Metrics:
     def _compute_row(self, identifier: str, info: dict) -> dict:
         """Calcula todas las estadísticas a partir del info dict de un batch."""
         lam         = info["lam"]
-        lam_raw     = info["lam_raw"]
         entropy     = info["entropy"]
         sensitivity = info["sensitivity"]
-        error       = info["error"]
         predictions = info["predictions"]
         targets     = info["targets"]
-        alpha_pc    = info["alpha_per_class"]
-        beta_pc     = info["beta_per_class"]
 
         # Estadísticas básicas
         lam_s    = _stats(lam)
-        lamr_s   = _stats(lam_raw)
         h_s      = _stats(entropy)
         s_s      = _stats(sensitivity)
-        err_s    = _stats(error)
-        alpha_s  = _stats(alpha_pc)
-        beta_s   = _stats(beta_pc)
 
         # Correlaciones de lambda con sus componentes
         corr_lam_sens   = _safe_corrcoef(lam, sensitivity)
         corr_lam_ent    = _safe_corrcoef(lam, entropy)
-        corr_lam_err    = _safe_corrcoef(lam, error)
 
         # Métricas por tipo de muestra (correct vs incorrect)
         correct_mask   = (predictions == targets)
@@ -179,9 +155,6 @@ class Metrics:
         lam_correct   = float(np.mean(lam[correct_mask]))   if correct_mask.any()   else float("nan")
         lam_incorrect = float(np.mean(lam[incorrect_mask])) if incorrect_mask.any() else float("nan")
 
-        # Efectividad: corrcoef(lambda, error_adv)
-        effectiveness = _safe_corrcoef(lam, error)
-
         row = {
             "identifier":           identifier,
             # Lambda final
@@ -189,11 +162,6 @@ class Metrics:
             "lam_mean":             lam_s["mean"],
             "lam_min":              lam_s["min"],
             "lam_max":              lam_s["max"],
-            # Lambda raw
-            "lam_raw_std":          lamr_s["std"],
-            "lam_raw_mean":         lamr_s["mean"],
-            "lam_raw_min":          lamr_s["min"],
-            "lam_raw_max":          lamr_s["max"],
             # Entropía
             "H_std":                h_s["std"],
             "H_mean":               h_s["mean"],
@@ -204,30 +172,12 @@ class Metrics:
             "S_mean":               s_s["mean"],
             "S_min":                s_s["min"],
             "S_max":                s_s["max"],
-            # Error
-            "error_std":            err_s["std"],
-            "error_mean":           err_s["mean"],
-            "error_min":            err_s["min"],
-            "error_max":            err_s["max"],
-            # Alpha por clase
-            "alpha_std":            alpha_s["std"],
-            "alpha_mean":           alpha_s["mean"],
-            "alpha_min":            alpha_s["min"],
-            "alpha_max":            alpha_s["max"],
-            # Beta por clase
-            "beta_std":             beta_s["std"],
-            "beta_mean":            beta_s["mean"],
-            "beta_min":             beta_s["min"],
-            "beta_max":             beta_s["max"],
             # Correlaciones
             "corr_lam_sensitivity": corr_lam_sens,
             "corr_lam_entropy":     corr_lam_ent,
-            "corr_lam_error":       corr_lam_err,
             # Correct/Incorrect
             "lam_correct_mean":     lam_correct,
             "lam_incorrect_mean":   lam_incorrect,
-            # Efectividad
-            "effectiveness":        effectiveness,
             # Losses
             "loss_natural":         info.get("loss_natural", float("nan")),
             "loss_robust":          info.get("loss_robust",  float("nan")),
