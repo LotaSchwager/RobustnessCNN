@@ -51,7 +51,7 @@ class Metrics:
         "identifier",
         # Lambda final
         "lam_std", "lam_mean", "lam_min", "lam_max",
-        # Lambda raw (pre-sigmoid)
+        # Lambda raw (pre-softplus)
         "lam_raw_std", "lam_raw_mean", "lam_raw_min", "lam_raw_max",
         # Entropía
         "H_std", "H_mean", "H_min", "H_max",

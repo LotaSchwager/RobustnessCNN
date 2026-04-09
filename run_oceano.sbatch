@@ -20,7 +20,7 @@
 # [1] CONFIGURACIÓN DEL JOB
 #     Ajusta estos valores según tu experimento.
 # -----------------------------------------------------------------------------
-#SBATCH -J dtrades_cifar10
+#SBATCH -J dtrades_cifar100
 #SBATCH -p GPU
 #SBATCH --qos=normal-gpu
 #SBATCH -n 1
@@ -88,7 +88,7 @@ echo "[INFO] GPU     : $(python -c 'import torch; print(torch.cuda.get_device_na
 #     El script Python lee estas variables con os.getenv().
 #     Modifica aquí para cambiar el experimento sin tocar el código Python.
 # -----------------------------------------------------------------------------
-export DATASET="cifar10"           
+export DATASET="cifar100"           
 export MODEL="resnet18"             
 export METHOD="d_trades"
 export EPOCHS=100
