@@ -30,41 +30,37 @@ def load_state(state, path: str, device) -> None:
     pass
 
 
+# Hiperparámetros de D-TRADES guardados directamente en el archivo
+DTRADES_PARAMS = {
+    "step_size":     2/255,   # Paso del ataque PGD
+    "epsilon":       8/255,   # Radio máximo de perturbación
+    "perturb_steps": 10,      # Número de pasos del ataque PGD
+    "alpha_base":    1.0,     # Peso base de la entropía local H(x)
+    "beta_base":     1.0,     # Peso base de la sensibilidad local S(x)
+    "gamma":         1.0,     # Peso de interacción H*S (error adversarial)
+    "lam_max":       3.0,     # Techo de lambda
+}
+
 def compute_loss(model, x, y, cfg, method_state):
     """
     Interfaz genérica de pérdida para train.py.
-
-    Parámetros
-    ----------
-    model        : nn.Module.
-    x            : batch de imágenes limpias [B, C, H, W].
-    y            : etiquetas verdaderas [B].
-    cfg          : instancia de Config (solo lectura).
-    method_state : None (no se usa en esta versión sin EMA).
-
-    Retorna
-    -------
-    loss : Tensor escalar con gradiente listo para .backward().
-    info : dict con métricas de diagnóstico (sin gradiente).
+    D-TRADES usa sus hiperparámetros locales definidos arriba en DTRADES_PARAMS,
+    ignorando la configuración de cfg para mantener total independencia y 
+    facilitar su edición centralizada por método.
     """
     loss_total, result = d_trades_loss(
         model         = model,
         x_natural     = x,
         y             = y,
-        step_size     = cfg.step_size,
-        epsilon       = cfg.epsilon,
-        perturb_steps = cfg.num_steps,
-        alpha         = cfg.alpha_base,       # peso de H(x) en el modulador
-        beta          = cfg.beta_base,        # peso de S(x) en el modulador
-        gamma         = cfg.gamma,            # peso de interacción H*S
-        weight_floor  = cfg.weight_floor,     # piso de (1 - f(x')_y)
-        lam_max       = cfg.lam_max,          # techo absoluto de lambda
+        step_size     = DTRADES_PARAMS["step_size"],
+        epsilon       = DTRADES_PARAMS["epsilon"],
+        perturb_steps = DTRADES_PARAMS["perturb_steps"],
+        alpha_base    = DTRADES_PARAMS["alpha_base"],
+        beta_base     = DTRADES_PARAMS["beta_base"],
+        gamma         = DTRADES_PARAMS["gamma"],
+        lam_max       = DTRADES_PARAMS["lam_max"],
     )
     return loss_total, result
-
-
-
-
 
 # ===========================================================================
 # Función de pérdida D-TRADES — formulación integrada
@@ -83,7 +79,6 @@ def d_trades_loss(
     gamma=1.0,                    # Peso del término de error adversarial (1 - p_adv_y)
     per_sample_sensitivity=False,  # True: cálculo exacto por muestra (loop); False: aproximación
     lam_max=3.0,                  # Techo de lambda
-    lam_min=0.1,                  # Suelo  de lambda
     EPS=1e-12,                    # Estabilidad numérica para log(0) en entropía
 ):
     """
@@ -282,7 +277,8 @@ def d_trades_loss(
         + gamma      * adv_error
     ).detach()                                          # [B]
 
-    lam = F.softplus(lam_raw).clamp(min=lam_min, max=lam_max)   # [lam_min, lam_max]
+    # lam = F.softplus(lam_raw).clamp(max=lam_max)   # [lam_max]
+    lam = torch.clamp(F.softplus(lam_raw, beta=2), max=lam_max)
 
     # ---------- Pérdida robusta ponderada ----------
     # L_robust = mean( lambda(x_i) * KL(f(x_i) || f(x_i+delta)) )

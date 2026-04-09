@@ -147,16 +147,23 @@ class Metrics:
     # ------------------------------------------------------------------
 
     def _compute_row(self, identifier: str, info: dict) -> dict:
-        """Calcula todas las estadísticas a partir del info dict de un batch."""
-        lam         = info["lam"]
-        lam_raw     = info["lam_raw"]
-        entropy     = info["entropy"]
-        sensitivity = info["sensitivity"]
-        error       = info["error"]
-        predictions = info["predictions"]
-        targets     = info["targets"]
-        alpha_pc    = info["alpha_per_class"]
-        beta_pc     = info["beta_per_class"]
+        """Calcula todas las estadísticas a partir del info dict de un batch.
+
+        Las claves exclusivas de D-TRADES (lam_raw, entropy, sensitivity, etc.)
+        pueden estar ausentes cuando se usa MART u otro método que no las produzca.
+        En ese caso las columnas correspondientes quedan como NaN en el CSV.
+        """
+        _empty = np.array([], dtype=np.float32)
+
+        lam         = info.get("lam",             _empty)
+        lam_raw     = info.get("lam_raw",         _empty)
+        entropy     = info.get("entropy",         _empty)
+        sensitivity = info.get("sensitivity",     _empty)
+        error       = info.get("error",           _empty)
+        predictions = info.get("predictions",     _empty)
+        targets     = info.get("targets",         _empty)
+        alpha_pc    = info.get("alpha_per_class", _empty)
+        beta_pc     = info.get("beta_per_class",  _empty)
 
         # Estadísticas básicas
         lam_s    = _stats(lam)
@@ -167,20 +174,22 @@ class Metrics:
         alpha_s  = _stats(alpha_pc)
         beta_s   = _stats(beta_pc)
 
-        # Correlaciones de lambda con sus componentes
-        corr_lam_sens   = _safe_corrcoef(lam, sensitivity)
-        corr_lam_ent    = _safe_corrcoef(lam, entropy)
-        corr_lam_err    = _safe_corrcoef(lam, error)
+        # Correlaciones lambda con sus componentes (NaN si los arrays están vacíos)
+        corr_lam_sens = _safe_corrcoef(lam, sensitivity) if len(sensitivity) else float("nan")
+        corr_lam_ent  = _safe_corrcoef(lam, entropy)     if len(entropy)     else float("nan")
+        corr_lam_err  = _safe_corrcoef(lam, error)       if len(error)       else float("nan")
 
         # Métricas por tipo de muestra (correct vs incorrect)
-        correct_mask   = (predictions == targets)
-        incorrect_mask = ~correct_mask
-
-        lam_correct   = float(np.mean(lam[correct_mask]))   if correct_mask.any()   else float("nan")
-        lam_incorrect = float(np.mean(lam[incorrect_mask])) if incorrect_mask.any() else float("nan")
+        lam_correct   = float("nan")
+        lam_incorrect = float("nan")
+        if len(predictions) and len(targets) and len(lam):
+            correct_mask   = (predictions == targets)
+            incorrect_mask = ~correct_mask
+            lam_correct   = float(np.mean(lam[correct_mask]))   if correct_mask.any()   else float("nan")
+            lam_incorrect = float(np.mean(lam[incorrect_mask])) if incorrect_mask.any() else float("nan")
 
         # Efectividad: corrcoef(lambda, error_adv)
-        effectiveness = _safe_corrcoef(lam, error)
+        effectiveness = _safe_corrcoef(lam, error) if len(error) else float("nan")
 
         row = {
             "identifier":           identifier,
