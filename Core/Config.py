@@ -20,75 +20,37 @@ class Config:
         self._method      = method
         self._epochs      = int(epochs)
         self._num_classes = int(num_classes)
-
-        # ── Hiperparámetros generales de entrenamiento ────────────────────────
-        # batch=256, lr=0.2 siguiendo la linear scaling rule respecto al
-        # baseline de TRADES (batch=128, lr=0.1): al doblar el batch se dobla lr.
-        self._batch        = 256
-        self._test_batch   = 256
+        
+        # Hiperparámetros generales de entrenamiento
+        self._batch = 256
+        self._test_batch = 256
         self._weight_decay = 5e-4
-        self._lr           = 0.2
-        self._momentum     = 0.9
-
+        self._lr = 0.2
+        self._momentum = 0.9
+        
         if method == "d_trades":
             # ── Parámetros del ataque PGD ─────────────────────────────────────
             # Epsilon 8/255 es el estándar de la literatura para CIFAR-10/100.
             # step_size = epsilon/4 es la regla empírica habitual para PGD-10.
             self._epsilon   = 8/255  if dataset in ["cifar10", "cifar100"] else 0.3
             self._num_steps = 10
-            self._step_size = 2/255  if dataset in ["cifar10", "cifar100"] else 0.01
-
-            # ── Parámetros de lambda dinámico ─────────────────────────────────
-            #
-            # alpha: peso de H(x) en el modulador.
-            #   Controla cuánto amplifica el KL la incertidumbre predictiva.
-            #   alpha=0 desactiva la contribución de entropía.
-            #
-            # beta: peso de S(x) en el modulador.
-            #   Controla cuánto amplifica el KL la sensibilidad adversarial.
-            #   beta=0 desactiva la contribución de sensibilidad.
-            #
-            # gamma: peso del término de interacción H(x)*S(x).
-            #   Captura el caso extremo: muestra incierta Y geométricamente
-            #   inestable. gamma=0 lo desactiva (recomendado para primera prueba;
-            #   activar solo si los experimentos muestran beneficio).
-            #
-            # weight_floor: piso mínimo del ponderador (1 - f(x')_y).
-            #   Evita que muestras bien clasificadas bajo ataque reciban lambda≈0
-            #   y pierdan gradualmente su robustez. Valor recomendado: 0.05–0.15.
-            #
-            # lam_max: techo de lambda tras el clamp final.
-            #   Previene que outliers (alta S y alta H simultáneamente) dominen
-            #   el gradiente del batch. Con alpha=beta=0.5, gamma=0 y
-            #   weight_floor=0.1, el lambda esperado en la mayor parte del
-            #   entrenamiento estará en [0.1, 1.5]. lam_max=2.0 deja margen
-            #   para casos extremos sin cortar señal útil.
-            self._alpha_base   = 0.5
-            self._beta_base    = 0.5
-            self._gamma        = 0.0    # desactivado: probar primero sin interacción
-            self._weight_floor = 0.1
-            self._lam_max      = 2.0
-
-            # Parámetros heredados (ya no usados activamente en la nueva fórmula,
-            # se mantienen para que make_state de versiones anteriores no falle
-            # si se carga un checkpoint antiguo).
-            self._rho = 0.1
-
+            self._step_size = 2/255 if dataset in ["cifar10", "cifar100"] else 0.01
+            
+            # Hiperparámetros del lambda dinámico adaptativo por clase:
+            #   alpha_base: peso base de la entropía local H(x).
+            #   beta_base : peso base de la sensibilidad local S(x).
+            self._alpha_base = 1.0
+            self._beta_base  = 1.0
+            self._gamma      = 1.0
         else:
-            self._epsilon      = 8/255
-            self._num_steps    = 10
-            self._step_size    = 2/255
-            self._alpha_base   = 0.5
-            self._beta_base    = 0.5
-            self._gamma        = 0.0
-            self._weight_floor = 0.1
-            self._lam_max      = 2.0
-            self._rho          = 0.1
-
-        # ── Logging y guardado ────────────────────────────────────────────────
-        # save_freq=25 guarda checkpoints en épocas 25, 50, 75 y el final.
-        # Con entrenamientos de 100 épocas esto es suficiente granularidad.
-        self._save_freq    = 25
+            self._epsilon    = 8/255
+            self._num_steps  = 10
+            self._step_size  = 2/255
+            self._alpha_base = 1.0
+            self._beta_base  = 1.0
+            self._gamma      = 0.0
+            
+        self._save_freq    = 20
         self._log_interval = 100
         self._run_name     = f"{method}_{dataset}_{model}"
         self._seed         = seed
@@ -178,9 +140,7 @@ class Config:
     @property
     def lam_max(self):       return self._lam_max
     @property
-    def rho(self):           return self._rho
-    @property
-    def save_freq(self):     return self._save_freq
+    def save_freq(self):   return self._save_freq
     @property
     def log_interval(self):  return self._log_interval
     @property

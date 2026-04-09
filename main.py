@@ -199,7 +199,8 @@ def main():
 
     print("\n[DONE] Entrenamiento finalizado.")
     print(f"       Modelo   → {cfg.results_dir}/{cfg.run_name}_final.pt")
-    print(f"       Métricas → {cfg.results_dir}/metricas.csv")
+    print(f"       Métricas → {cfg.results_dir}/batch_metrics.csv")
+    print(f"                  {cfg.results_dir}/epoch_metrics.csv")
 
 
 if __name__ == "__main__":

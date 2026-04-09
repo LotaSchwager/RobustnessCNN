@@ -88,7 +88,7 @@ echo "[INFO] GPU     : $(python -c 'import torch; print(torch.cuda.get_device_na
 #     El script Python lee estas variables con os.getenv().
 #     Modifica aquí para cambiar el experimento sin tocar el código Python.
 # -----------------------------------------------------------------------------
-export DATASET="cifar10"           
+export DATASET="cifar100"           
 export MODEL="resnet18"             
 export METHOD="d_trades"
 export EPOCHS=100
