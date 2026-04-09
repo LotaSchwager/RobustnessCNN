@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,8 +9,8 @@ import numpy as np
 # ===========================================================================
 # Interfaz pública genérica (registrada en Metodo/__init__.py)
 # ===========================================================================
-# Todo método en Metodo/ debe exponer estas tres funciones con esta firma.
-# Así train.py y main.py no necesitan saber qué método está activo.
+# Todo método debe exponer estas cuatro funciones con esta firma exacta.
+# Así train.py y main.py son completamente agnósticos al método activo.
 
 def make_state(cfg, device):
     """
@@ -35,7 +36,7 @@ def compute_loss(model, x, y, cfg, method_state):
 
     Parámetros
     ----------
-    model        : nn.Module en modo train/eval según requiera el método.
+    model        : nn.Module.
     x            : batch de imágenes limpias [B, C, H, W].
     y            : etiquetas verdaderas [B].
     cfg          : instancia de Config (solo lectura).
@@ -43,11 +44,8 @@ def compute_loss(model, x, y, cfg, method_state):
 
     Retorna
     -------
-    loss     : Tensor escalar con gradiente listo para .backward().
-    info     : dict con métricas de diagnóstico (sin gradiente):
-                 - "lambda_min", "lambda_max", "lambda_mean"
-                 - "loss_natural", "loss_robust"
-               Cualquier llamante puede ignorar claves que no necesite.
+    loss : Tensor escalar con gradiente listo para .backward().
+    info : dict con métricas de diagnóstico (sin gradiente).
     """
     loss_total, result = d_trades_loss(
         model         = model,
@@ -56,9 +54,11 @@ def compute_loss(model, x, y, cfg, method_state):
         step_size     = cfg.step_size,
         epsilon       = cfg.epsilon,
         perturb_steps = cfg.num_steps,
-        alpha_base    = cfg.alpha_base,
-        beta_base     = cfg.beta_base,
-        gamma         = cfg.gamma,
+        alpha         = cfg.alpha_base,       # peso de H(x) en el modulador
+        beta          = cfg.beta_base,        # peso de S(x) en el modulador
+        gamma         = cfg.gamma,            # peso de interacción H*S
+        weight_floor  = cfg.weight_floor,     # piso de (1 - f(x')_y)
+        lam_max       = cfg.lam_max,          # techo absoluto de lambda
     )
     return loss_total, result
 
@@ -67,7 +67,7 @@ def compute_loss(model, x, y, cfg, method_state):
 
 
 # ===========================================================================
-# Función de pérdida D-TRADES
+# Función de pérdida D-TRADES — formulación integrada
 # ===========================================================================
 
 def d_trades_loss(

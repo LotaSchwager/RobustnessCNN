@@ -22,14 +22,30 @@ class DataConfig:
             meta, test, train      ← archivos del dataset CIFAR-100
 
     Los datasets deben estar en local (download=False por defecto).
+
+    use_randaugment: Si True, añade RandAugment al pipeline de entrenamiento.
+        RandAugment (Cubuk et al., 2020) aplica N transformaciones aleatorias
+        de una lista predefinida (rotación, brillo, contraste, etc.) con
+        magnitud M. En defensa adversarial, la literatura muestra que el
+        augmentation agresivo mejora tanto la acc natural como la robustez
+        (Rebuffi et al., 2021; Gowal et al., 2021). Se activa por defecto.
+        Para desactivarlo, pasar use_randaugment=False en DataConfig.
+
+    randaugment_n: Número de transformaciones a aplicar por imagen (default 2).
+    randaugment_m: Magnitud de cada transformación, rango [0, 30] (default 9).
+        Valores más altos = augmentation más agresivo. 9 es un valor moderado
+        que da beneficio sin degradar la acc natural en CIFAR-10.
     """
-    name:            DatasetName
-    root:            str  = "./data"   # Directorio BASE (no la carpeta del dataset)
-    batch_size:      int  = 128
-    test_batch_size: int  = 256
-    num_workers:     int  = 4
-    use_cuda:        bool = True
-    download:        bool = False      # False: solo local; no requiere internet
+    name:             DatasetName
+    root:             str  = "./data"
+    batch_size:       int  = 128
+    test_batch_size:  int  = 256
+    num_workers:      int  = 4
+    use_cuda:         bool = True
+    download:         bool = False
+    use_randaugment:  bool = True    # activo por defecto
+    randaugment_n:    int  = 2       # número de transformaciones
+    randaugment_m:    int  = 9       # magnitud de cada transformación
 
 
 # =============================================================================
@@ -49,15 +65,41 @@ def dataset_stats(name: str) -> Tuple[Tuple[float, ...], Tuple[float, ...], int]
     raise ValueError(f"Dataset no soportado: {name}")
 
 
-def make_transforms(name: str):
-    """Transforms sin Normalize (Normalize se aplica dentro de NormalizeLayer)."""
+def make_transforms(cfg: DataConfig):
+    """
+    Construye los transforms de entrenamiento y test.
+
+    La normalización NO se incluye aquí — se aplica dentro de NormalizeLayer
+    encapsulada en el modelo, de modo que las perturbaciones adversariales
+    también pasan por ella correctamente.
+
+    Para CIFAR-10/100 el pipeline de entrenamiento es:
+        RandomCrop(32, padding=4)    → variación espacial básica
+        RandomHorizontalFlip()       → invarianza a espejo horizontal
+        RandAugment(n, m)            → augmentation adicional si está activo
+        ToTensor()                   → convierte a [0,1]
+
+    RandAugment se coloca después de las transformaciones geométricas básicas
+    y antes de ToTensor, que es el orden estándar en la literatura.
+    """
+    name = cfg.name
+
     if name in ("cifar10", "cifar100"):
-        train_tf = transforms.Compose([
+        train_list = [
             transforms.RandomCrop(32, padding=4),
             transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-        ])
-        test_tf = transforms.Compose([transforms.ToTensor()])
+        ]
+        if cfg.use_randaugment:
+            # RandAugment disponible desde torchvision 0.11
+            train_list.append(
+                transforms.RandAugment(
+                    num_ops    = cfg.randaugment_n,
+                    magnitude  = cfg.randaugment_m,
+                )
+            )
+        train_list.append(transforms.ToTensor())
+        train_tf = transforms.Compose(train_list)
+        test_tf  = transforms.Compose([transforms.ToTensor()])
         return train_tf, test_tf
 
     if name in ("mnist", "fashionmnist"):
@@ -72,7 +114,7 @@ def make_transforms(name: str):
 
 
 def make_datasets(cfg: DataConfig):
-    train_tf, test_tf = make_transforms(cfg.name)
+    train_tf, test_tf = make_transforms(cfg)
     root = cfg.root
 
     if cfg.name == "cifar10":
@@ -121,7 +163,7 @@ def make_loaders(cfg: DataConfig):
         else {}
     )
     train_loader = DataLoader(
-        train_ds, batch_size=cfg.batch_size, shuffle=True, **kwargs)
+        train_ds, batch_size=cfg.batch_size, shuffle=True,  **kwargs)
     test_loader  = DataLoader(
         test_ds,  batch_size=cfg.test_batch_size, shuffle=False, **kwargs)
 

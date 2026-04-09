@@ -74,7 +74,7 @@ def train_one_epoch(
             lambda_means.append(float(np.mean(info["lam"])))
 
         if batch_idx % log_interval == 0:
-            lm = f"{np.mean(lambda_means):.4f}" if lambda_means else "n/a"
+            lm = f"{lam_mean:.4f}" if not np.isnan(lam_mean) else "n/a"
             print(
                 f"Train Epoch: {epoch} "
                 f"[{batch_idx * len(data)}/{len(train_loader.dataset)} "
