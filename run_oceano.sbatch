@@ -90,7 +90,7 @@ echo "[INFO] GPU     : $(python -c 'import torch; print(torch.cuda.get_device_na
 # -----------------------------------------------------------------------------
 export DATASET="cifar100"           
 export MODEL="resnet18"             
-export METHOD="d_trades"
+export METHOD="mart"
 export EPOCHS=100
 
 # Recuperación ante caídas (Resuming)
