@@ -25,7 +25,7 @@ class Config:
         self._batch = 256
         self._test_batch = 256
         self._weight_decay = 5e-4
-        self._lr = 0.2
+        self._lr = float(os.getenv("LR", "0.1"))
         self._momentum = 0.9
         
         if method == "d_trades":

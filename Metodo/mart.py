@@ -51,8 +51,9 @@ def mart_loss(
     model.train()
     x_adv = x_adv.detach()
     
-    logits = model(x_natural)
-    logits_adv = model(x_adv)
+    # Evaluar juntos para mantener las estadísticas de BatchNorm estables
+    logits_all = model(torch.cat([x_natural, x_adv], dim=0))
+    logits, logits_adv = logits_all.chunk(2, dim=0)
     
     # Probabilidades adversariales y reasignación de etiquetas para loss_adv
     adv_probs = F.softmax(logits_adv, dim=1)
