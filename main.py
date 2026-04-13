@@ -41,6 +41,7 @@ def main():
         num_workers     = 10,
         use_cuda        = True,
         download        = False,
+        use_randaugment = os.getenv("USE_RANDAUGMENT", "True").lower() == "true",
     )
     train_loader, test_loader, mean, std, num_classes = make_loaders(data_cfg)
     print(f"[DATA] Dataset: {dataset_name}  |  Clases: {num_classes}")

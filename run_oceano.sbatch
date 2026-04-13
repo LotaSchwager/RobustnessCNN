@@ -92,6 +92,7 @@ export DATASET="cifar100"
 export MODEL="resnet18"             
 export METHOD="mart"
 export EPOCHS=100
+export USE_RANDAUGMENT="false"
 
 # Recuperación ante caídas (Resuming)
 # Si tu job fue cancelado por límite de tiempo de SLURM, descomenta la siguiente
