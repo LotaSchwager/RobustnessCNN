@@ -40,7 +40,7 @@ class DataConfig:
     root:             str  = "./data"
     batch_size:       int  = 128
     test_batch_size:  int  = 256
-    num_workers:      int  = 4
+    num_workers:      int  = 10
     use_cuda:         bool = True
     download:         bool = False
     use_randaugment:  bool = True    # activo por defecto

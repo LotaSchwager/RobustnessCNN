@@ -22,7 +22,7 @@ class Config:
         self._num_classes = int(num_classes)
         
         # Hiperparámetros generales de entrenamiento
-        self._batch = 256
+        self._batch = 128
         self._test_batch = 256
         self._weight_decay = 5e-4
         self._lr = float(os.getenv("LR", "0.1"))
