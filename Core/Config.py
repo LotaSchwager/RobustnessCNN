@@ -136,10 +136,6 @@ class Config:
     @property
     def gamma(self):         return self._gamma
     @property
-    def weight_floor(self):  return self._weight_floor
-    @property
-    def lam_max(self):       return self._lam_max
-    @property
     def save_freq(self):   return self._save_freq
     @property
     def log_interval(self):  return self._log_interval
