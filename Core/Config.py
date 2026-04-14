@@ -22,9 +22,11 @@ class Config:
         self._num_classes = int(num_classes)
         
         # Hiperparámetros generales de entrenamiento
+        _is_wrn = model.lower().startswith('wide') or model.lower().startswith('wrn')
+
         self._batch = 128
         self._test_batch = 256
-        self._weight_decay = 5e-4
+        self._weight_decay = 7e-4 if _is_wrn else 5e-4
         self._lr = float(os.getenv("LR", "0.1"))
         self._momentum = 0.9
         
