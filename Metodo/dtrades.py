@@ -195,7 +195,7 @@ def d_trades_loss(
 
     # KL por muestra: KL(f(x) || f(x+delta)), forma [B]
     kl_per_example = F.kl_div(
-        log_probs_adv, probs_nat, reduction='none'
+        log_probs_adv, probs_nat.detach(), reduction='none'
     ).sum(dim=1)
 
     # ---------- Entropía local H(x) [B] ----------

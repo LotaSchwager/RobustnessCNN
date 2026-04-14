@@ -74,13 +74,17 @@ def mart_loss(
     )
 
     # ---- KL ponderado por (1 - p_nat[y]) ------------------------------------
+    # Ahora:
     nat_probs  = F.softmax(logits, dim=1)
-    true_probs = torch.gather(nat_probs, 1, y.unsqueeze(1).long()).squeeze()
+    # Separamos la referencia matemática para que PyTorch NO envíe gradientes
+    nat_probs_target = nat_probs.detach()
+    true_probs_target = torch.gather(nat_probs_target, 1, y.unsqueeze(1).long()).squeeze()
 
     loss_robust = (1.0 / batch_size) * torch.sum(
-        torch.sum(kl(torch.log(adv_probs + 1e-12), nat_probs), dim=1)
-        * (1.0000001 - true_probs)
+        torch.sum(kl(torch.log(adv_probs + 1e-12), nat_probs_target), dim=1)
+        * (1.0000001 - true_probs_target)
     )
+
 
     loss = loss_adv + float(beta) * loss_robust
 
