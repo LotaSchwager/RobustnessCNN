@@ -54,6 +54,8 @@ def train_one_epoch(
     epoch_loss     = 0.0
     lambda_means:  list[float] = []
 
+    batch_record_freq = 10   # escribir batch_metrics.csv cada N batches
+
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
 
@@ -68,10 +70,11 @@ def train_one_epoch(
         epoch_loss += loss.item() * bs
         seen       += bs
 
-        # ── Registrar métricas por batch ───────────────────────────────────
+        # ── Registrar métricas por batch (cada N batches para reducir I/O) ─
         if "lam" in info:
-            metrics.record_batch(epoch, batch_idx, info)
             lambda_means.append(float(np.mean(info["lam"])))
+            if batch_idx % batch_record_freq == 0:
+                metrics.record_batch(epoch, batch_idx, info)
 
         if batch_idx % log_interval == 0:
             lm = f"{np.mean(lambda_means):.4f}" if lambda_means else "n/a"
@@ -121,6 +124,7 @@ def run_training(
     save_state_fn    = None,             # serializa method_state junto al ckpt
     scheduler:       Optional[Any] = None,
     start_epoch:     int = 1,
+    eval_freq:       int = 10,           # evaluar PGD cada N épocas
 ) -> None:
     """
     Bucle de entrenamiento genérico.
@@ -153,8 +157,22 @@ def run_training(
             log_interval     = cfg.log_interval,
         )
 
-        # ── Evaluación ─────────────────────────────────────────────────────────
-        eval_stats = evaluator_fn(model, device, test_loader)
+        # ── Evaluación (cada eval_freq épocas y en la última) ──────────────────
+        is_eval_epoch = (epoch % eval_freq == 0) or (epoch == cfg.epochs)
+
+        if is_eval_epoch:
+            eval_stats = evaluator_fn(model, device, test_loader)
+        else:
+            # Placeholder: no gastar tiempo en PGD-20 en épocas intermedias
+            next_eval = ((epoch // eval_freq) + 1) * eval_freq
+            next_eval = min(next_eval, cfg.epochs)
+            print(f"[EVAL] Saltada (próxima en época {next_eval})")
+            eval_stats = {
+                "natural_acc": float("nan"),
+                "robust_acc":  float("nan"),
+                "robust_drop": float("nan"),
+                "attack_success_rate": float("nan"),
+            }
 
         # ── Métricas por época (promedios de batches) ──────────────────────────
         metrics.record_epoch(epoch)
@@ -164,13 +182,21 @@ def run_training(
             f"λ=[{stats.lambda_min:.3f},{stats.lambda_mean:.3f},{stats.lambda_max:.3f}]"
             if not np.isnan(stats.lambda_mean) else ""
         )
-        print(
-            f"[Época {epoch:03d}/{cfg.epochs}] "
-            f"Loss={stats.loss:.4f}  "
-            f"AccNat={eval_stats['natural_acc']:.4f}  "
-            f"AccRob={eval_stats['robust_acc']:.4f}  "
-            f"{lam_str}"
-        )
+        if is_eval_epoch:
+            print(
+                f"[Época {epoch:03d}/{cfg.epochs}] "
+                f"Loss={stats.loss:.4f}  "
+                f"AccNat={eval_stats['natural_acc']:.4f}  "
+                f"AccRob={eval_stats['robust_acc']:.4f}  "
+                f"{lam_str}"
+            )
+        else:
+            print(
+                f"[Época {epoch:03d}/{cfg.epochs}] "
+                f"Loss={stats.loss:.4f}  "
+                f"AccNat=----  AccRob=----  "
+                f"{lam_str}"
+            )
 
         # ── Checkpoint  ────────────────────────────────────────────────────────
         checkpoint_base = cfg.save_checkpoints(epoch, optimizer, model)

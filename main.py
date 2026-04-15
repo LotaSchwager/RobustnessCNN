@@ -3,6 +3,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+# cuDNN benchmark: selecciona el algoritmo de convolución más rápido para
+# inputs de tamaño fijo (32×32). Solo tiene coste en el primer forward.
+torch.backends.cudnn.benchmark = True
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
