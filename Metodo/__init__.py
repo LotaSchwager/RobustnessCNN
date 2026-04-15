@@ -14,10 +14,12 @@ Para añadir un método nuevo:
 """
 
 from . import dtrades as _dtrades
+from . import dtrades_og as _dtrades_og
 from . import mart as _mart
 
 METHODS: dict = {
     "d_trades": _dtrades,
+    "d_trades_og": _dtrades_og,
     "mart": _mart,
 }
 
