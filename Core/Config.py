@@ -2,6 +2,16 @@ import os
 import torch
 import time
 
+# Tamaño de imagen de entrada por dataset (usado para elegir el stem del modelo)
+_DATASET_IMG_SIZE = {
+    "cifar10":     32,
+    "cifar100":    32,
+    "mnist":       28,
+    "fashionmnist":28,
+    "svhn":        32,
+    "riawelc":    224,
+}
+
 class Config:
     def __init__(
             self,
@@ -21,6 +31,9 @@ class Config:
         self._epochs      = int(epochs)
         self._num_classes = int(num_classes)
         
+        # Tamaño de imagen: determina el stem arquitectónico del modelo
+        self._img_size = _DATASET_IMG_SIZE.get(dataset, 32)
+
         # Hiperparámetros generales de entrenamiento
         _is_wrn = model.lower().startswith('wide') or model.lower().startswith('wrn')
 
@@ -34,9 +47,9 @@ class Config:
             # ── Parámetros del ataque PGD ─────────────────────────────────────
             # Epsilon 8/255 es el estándar de la literatura para CIFAR-10/100.
             # step_size = epsilon/4 es la regla empírica habitual para PGD-10.
-            self._epsilon   = 8/255  if dataset in ["cifar10", "cifar100"] else 0.3
+            self._epsilon   = 8/255  if dataset in ["cifar10", "cifar100", "riawelc"] else 0.3
             self._num_steps = 10
-            self._step_size = 2/255 if dataset in ["cifar10", "cifar100"] else 0.01
+            self._step_size = 2/255 if dataset in ["cifar10", "cifar100", "riawelc"] else 0.01
             
             # Hiperparámetros del lambda dinámico adaptativo por clase:
             #   alpha_base: peso base de la entropía local H(x).
@@ -157,3 +170,5 @@ class Config:
     def kwargs(self):        return self._kwargs
     @property
     def use_cuda(self):      return self._use_cuda
+    @property
+    def img_size(self):      return self._img_size

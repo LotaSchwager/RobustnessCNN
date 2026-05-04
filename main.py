@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 # cuDNN benchmark: selecciona el algoritmo de convolución más rápido para
-# inputs de tamaño fijo (32×32). Solo tiene coste en el primer forward.
+# inputs de tamaño fijo. Solo tiene coste en el primer forward pass.
 torch.backends.cudnn.benchmark = True
 
 try:
@@ -37,11 +37,18 @@ def main():
     # -------------------------------------------------------------------------
     # 2) Dataset — se carga primero para conocer num_classes antes de Config
     # -------------------------------------------------------------------------
+    # Batch size configurable por env var.
+    # Default inteligente: RIAWELC usa imágenes 7× más grandes → menos imágenes por batch.
+    #   riawelc: 64  (a partir de ahí escalar según VRAM disponible)
+    #   resto:  128
+    _default_batch = "64" if dataset_name == "riawelc" else "128"
+    batch_size = int(os.getenv("BATCH_SIZE", _default_batch))
+
     data_cfg = DataConfig(
         name            = dataset_name,
         root            = "./data",
-        batch_size      = 256,
-        test_batch_size = 256,
+        batch_size      = batch_size,
+        test_batch_size = batch_size * 2,
         num_workers     = 10,
         use_cuda        = True,
         download        = False,
@@ -79,10 +86,18 @@ def main():
 
     # -------------------------------------------------------------------------
     # 5) Modelo con normalización encapsulada
+    #
+    #    img_size   → elige el stem arquitectónico correcto:
+    #                   32px  → stem CIFAR  (conv 3×3/stride-1)
+    #                   224px → stem ImageNet (conv 7×7/stride-2 + MaxPool)
+    #    dropout_rate → regularización para WideResNet. Env WRN_DROPOUT.
+    #                   Recomendado 0.3 para RIAWELC (más complejo que CIFAR).
     # -------------------------------------------------------------------------
-    base  = get_model(model_name, num_classes=num_classes)
+    dropout_rate = float(os.getenv("WRN_DROPOUT", "0.0"))
+    base  = get_model(model_name, num_classes=num_classes,
+                      img_size=cfg.img_size, dropout_rate=dropout_rate)
     model = nn.Sequential(NormalizeLayer(mean, std), base).to(cfg.device)
-    print(f"[MODEL] {model_name}  |  device: {cfg.device}")
+    print(f"[MODEL] {model_name}  |  img_size={cfg.img_size}  |  dropout={dropout_rate}  |  device: {cfg.device}")
 
     # -------------------------------------------------------------------------
     # 6) Optimizador y Scheduler
