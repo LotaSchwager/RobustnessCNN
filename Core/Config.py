@@ -37,8 +37,8 @@ class Config:
         # Hiperparámetros generales de entrenamiento
         _is_wrn = model.lower().startswith('wide') or model.lower().startswith('wrn')
 
-        self._batch = 128
-        self._test_batch = 256
+        self._batch = int(os.getenv("BATCH_SIZE", "64"))
+        self._test_batch = int(os.getenv("TEST_BATCH_SIZE", "128"))
         self._weight_decay = 7e-4 if _is_wrn else 5e-4
         self._lr = float(os.getenv("LR", "0.1"))
         self._momentum = 0.9

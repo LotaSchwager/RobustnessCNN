@@ -88,10 +88,12 @@ echo "[INFO] GPU     : $(python -c 'import torch; print(torch.cuda.get_device_na
 #     El script Python lee estas variables con os.getenv().
 #     Modifica aquí para cambiar el experimento sin tocar el código Python.
 # -----------------------------------------------------------------------------
-export DATASET="cifar100"           
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export DATASET="riawelc"           
 export MODEL="resnet18"             
-export METHOD="mart"
-export EPOCHS=100
+export METHOD="d_trades"
+export BATCH_SIZE="64"
+export EPOCHS=1
 export USE_RANDAUGMENT="false"
 
 # Recuperación ante caídas (Resuming)
