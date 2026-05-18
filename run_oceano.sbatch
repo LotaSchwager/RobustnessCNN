@@ -83,11 +83,12 @@ echo "[INFO] GPU     : $(python -c 'import torch; print(torch.cuda.get_device_na
 #     El script Python de evaluación lee estas variables para configurar el modelo
 #     y cargar los pesos desde tu CHECKPOINT_PATH.
 # -----------------------------------------------------------------------------
-export DATASET="cifar10"
+export DATASET="riawelc"
 export MODEL="resnet18"
 export METHOD="d_trades"
 
-# INGRESA AQUÍ LA RUTA ABSOLUTA O RELATIVA DEL MODELO A EVALUAR
+# INGRESA AQUÍ LA RUTA ABSOLUTA AL ARCHIVO .pt DEL MODELO ENTRENADO
+# Ejemplo: /home/ademir.munoz/RobustnessCNN/Resultado/modelo/<run_id>/d_trades_riawelc_resnet18_final.pt
 export CHECKPOINT_PATH="/home/ademir.munoz/RobustnessCNN/Resultado/modelo/"
 
 export PYTHONPATH="$(pwd):$PYTHONPATH"

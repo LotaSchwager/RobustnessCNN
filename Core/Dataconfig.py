@@ -5,9 +5,9 @@ from typing import Literal, Tuple
 
 import torchvision
 from torchvision import transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ConcatDataset
 
-DatasetName = Literal["cifar10", "cifar100", "mnist", "fashionmnist", "svhn"]
+DatasetName = Literal["cifar10", "cifar100", "mnist", "fashionmnist", "svhn", "riawelc"]
 
 @dataclass
 class DataConfig:
@@ -20,16 +20,43 @@ class DataConfig:
             cifar-10-batches-py/   ← extraído de torchvision
           cifar-100/
             meta, test, train      ← archivos del dataset CIFAR-100
+          RIAWELC/
+            Dataset_partitioned/
+              DB - Copy/
+                training/   ← Difetto1, Difetto2, Difetto4, NoDifetto
+                testing/    ← idem
+                validation/ ← idem
 
     Los datasets deben estar en local (download=False por defecto).
+
+    use_randaugment: Si True, añade RandAugment al pipeline de entrenamiento.
+        RandAugment (Cubuk et al., 2020) aplica N transformaciones aleatorias
+        de una lista predefinida (rotación, brillo, contraste, etc.) con
+        magnitud M. En defensa adversarial, la literatura muestra que el
+        augmentation agresivo mejora tanto la acc natural como la robustez
+        (Rebuffi et al., 2021; Gowal et al., 2021). Se activa por defecto.
+        Para desactivarlo, pasar use_randaugment=False en DataConfig.
+
+    randaugment_n: Número de transformaciones a aplicar por imagen (default 2).
+    randaugment_m: Magnitud de cada transformación, rango [0, 30] (default 9).
+        Valores más altos = augmentation más agresivo. 9 es un valor moderado
+        que da beneficio sin degradar la acc natural en CIFAR-10.
+
+    riawelc_img_size: Tamaño de imagen para RIAWELC (default 224). Las
+        imágenes originales son 227×227 grayscale; se redimensionan a 224
+        para compatibilidad con arquitecturas estándar.
     """
-    name:            DatasetName
-    root:            str  = "./data"   # Directorio BASE (no la carpeta del dataset)
-    batch_size:      int  = 128
-    test_batch_size: int  = 256
-    num_workers:     int  = 4
-    use_cuda:        bool = True
-    download:        bool = False      # False: solo local; no requiere internet
+    name:             DatasetName
+    root:             str  = "./data"
+    batch_size:       int  = 128
+    test_batch_size:  int  = 256
+    num_workers:      int  = 10
+    use_cuda:         bool = True
+    download:         bool = False
+    use_randaugment:  bool = True    # activo por defecto
+    randaugment_n:    int  = 2       # número de transformaciones
+    randaugment_m:    int  = 9       # magnitud de cada transformación
+    riawelc_img_size: int  = 224     # tamaño final de imagen para RIAWELC
 
 
 # =============================================================================
@@ -46,18 +73,62 @@ def dataset_stats(name: str) -> Tuple[Tuple[float, ...], Tuple[float, ...], int]
         return (0.1307,), (0.3081,), 10
     if name == "svhn":
         return (0.4377, 0.4438, 0.4728), (0.1980, 0.2010, 0.1970), 10
+    if name == "riawelc":
+        # RIAWELC: 24,407 imágenes radiográficas de soldaduras, 227×227, grayscale.
+        # 4 clases: Difetto1 (LP), Difetto2 (PO), Difetto4 (CR), NoDifetto (ND).
+        # Como las imágenes se convierten a 3 canales (Grayscale→RGB), los 3
+        # canales son idénticos. Valores aproximados para imágenes radiográficas
+        # 8-bit; se recomienda recalcular con compute_dataset_stats() si se
+        # requiere precisión fina.
+        return (0.5, 0.5, 0.5), (0.25, 0.25, 0.25), 4
     raise ValueError(f"Dataset no soportado: {name}")
 
 
-def make_transforms(name: str):
-    """Transforms sin Normalize (Normalize se aplica dentro de NormalizeLayer)."""
+def make_transforms(cfg: DataConfig):
+    """
+    Construye los transforms de entrenamiento y test.
+
+    La normalización NO se incluye aquí — se aplica dentro de NormalizeLayer
+    encapsulada en el modelo, de modo que las perturbaciones adversariales
+    también pasan por ella correctamente.
+
+    Para CIFAR-10/100 el pipeline de entrenamiento es:
+        RandomCrop(32, padding=4)    → variación espacial básica
+        RandomHorizontalFlip()       → invarianza a espejo horizontal
+        RandAugment(n, m)            → augmentation adicional si está activo
+        ToTensor()                   → convierte a [0,1]
+
+    Para RIAWELC (227×227 grayscale) el pipeline es:
+        Grayscale(3)                 → convierte 1 canal a 3 canales (RGB)
+        Resize(256)                  → escalado previo
+        RandomCrop(224)              → recorte aleatorio (train)
+        CenterCrop(224)              → recorte centrado (test)
+        RandomHorizontalFlip()       → augmentation geométrico (train)
+        RandomVerticalFlip()         → idem (train): radioía sin orientación canónica
+        RandomRotation(10)           → ±10° para variabilidad de posición del defecto
+        RandAugment(n, m)            → augmentation adicional si activo (train)
+        ToTensor()                   → convierte a [0,1]
+
+    RandAugment se coloca después de las transformaciones geométricas básicas
+    y antes de ToTensor, que es el orden estándar en la literatura.
+    """
+    name = cfg.name
+
     if name in ("cifar10", "cifar100"):
-        train_tf = transforms.Compose([
+        train_list = [
             transforms.RandomCrop(32, padding=4),
             transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-        ])
-        test_tf = transforms.Compose([transforms.ToTensor()])
+        ]
+        if cfg.use_randaugment:
+            train_list.append(
+                transforms.RandAugment(
+                    num_ops    = cfg.randaugment_n,
+                    magnitude  = cfg.randaugment_m,
+                )
+            )
+        train_list.append(transforms.ToTensor())
+        train_tf = transforms.Compose(train_list)
+        test_tf  = transforms.Compose([transforms.ToTensor()])
         return train_tf, test_tf
 
     if name in ("mnist", "fashionmnist"):
@@ -68,11 +139,43 @@ def make_transforms(name: str):
         tf = transforms.Compose([transforms.ToTensor()])
         return tf, tf
 
+    if name == "riawelc":
+        img_size = cfg.riawelc_img_size  # 224 por defecto
+
+        base_list = [
+            transforms.Grayscale(num_output_channels=3),
+            transforms.Resize(img_size + 32),    # 256 para RandomCrop(224)
+        ]
+
+        train_list = base_list + [
+            transforms.RandomCrop(img_size),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomVerticalFlip(),
+            transforms.RandomRotation(degrees=10),
+        ]
+        if cfg.use_randaugment:
+            train_list.append(
+                transforms.RandAugment(
+                    num_ops    = cfg.randaugment_n,
+                    magnitude  = cfg.randaugment_m,
+                )
+            )
+        train_list.append(transforms.ToTensor())
+        train_tf = transforms.Compose(train_list)
+
+        test_tf = transforms.Compose(
+            base_list + [
+                transforms.CenterCrop(img_size),
+                transforms.ToTensor(),
+            ]
+        )
+        return train_tf, test_tf
+
     raise ValueError(f"Transforms no definidos para: {name}")
 
 
 def make_datasets(cfg: DataConfig):
-    train_tf, test_tf = make_transforms(cfg.name)
+    train_tf, test_tf = make_transforms(cfg)
     root = cfg.root
 
     if cfg.name == "cifar10":
@@ -105,6 +208,36 @@ def make_datasets(cfg: DataConfig):
         test_ds  = torchvision.datasets.SVHN(
             root, split="test",  download=cfg.download, transform=test_tf)
 
+    elif cfg.name == "riawelc":
+        riawelc_root = os.path.join(root, "RIAWELC", "Dataset_partitioned", "DB - Copy")
+
+        train_dir = os.path.join(riawelc_root, "training")
+        test_dir  = os.path.join(riawelc_root, "testing")
+        val_dir   = os.path.join(riawelc_root, "validation")
+
+        if not os.path.isdir(train_dir):
+            raise FileNotFoundError(
+                f"[RIAWELC] No se encontró el directorio de entrenamiento:\n"
+                f"  {train_dir}\n"
+                f"Asegúrate de haber extraído el RAR en "
+                f"data/RIAWELC/Dataset_partitioned/"
+            )
+
+        train_ds_main = torchvision.datasets.ImageFolder(train_dir, transform=train_tf)
+        test_ds       = torchvision.datasets.ImageFolder(test_dir,  transform=test_tf)
+
+        if os.path.isdir(val_dir):
+            val_ds   = torchvision.datasets.ImageFolder(val_dir, transform=train_tf)
+            train_ds = ConcatDataset([train_ds_main, val_ds])
+            print(f"[RIAWELC] training ({len(train_ds_main)}) + "
+                  f"validation ({len(val_ds)}) = {len(train_ds)} imágenes de entrenamiento")
+        else:
+            train_ds = train_ds_main
+            print(f"[RIAWELC] {len(train_ds)} imágenes de entrenamiento")
+
+        print(f"[RIAWELC] {len(test_ds)} imágenes de test")
+        print(f"[RIAWELC] Clases: {train_ds_main.classes}")
+
     else:
         raise ValueError(f"Dataset no soportado: {cfg.name}")
 
@@ -121,7 +254,7 @@ def make_loaders(cfg: DataConfig):
         else {}
     )
     train_loader = DataLoader(
-        train_ds, batch_size=cfg.batch_size, shuffle=True, **kwargs)
+        train_ds, batch_size=cfg.batch_size, shuffle=True,  **kwargs)
     test_loader  = DataLoader(
         test_ds,  batch_size=cfg.test_batch_size, shuffle=False, **kwargs)
 

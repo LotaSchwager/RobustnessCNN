@@ -30,13 +30,14 @@ def main():
     # 2) DATA (solo testeo)
     # -------------------------------------------------------------------------
     data_cfg = DataConfig(
-        name            = dataset_name,
-        root            = "./data",
-        batch_size      = 256,          
-        test_batch_size = 256,
-        num_workers     = 4,
-        use_cuda        = True,
-        download        = False,
+        name             = dataset_name,
+        root             = "./data",
+        batch_size       = 64,
+        test_batch_size  = 128,
+        num_workers      = 10,
+        use_cuda         = True,
+        download         = False,
+        use_randaugment  = False,   # sin augmentation en evaluación
     )
 
     _, test_loader, mean, std, num_classes = make_loaders(data_cfg)
