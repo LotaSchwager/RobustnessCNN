@@ -20,12 +20,12 @@
 # [1] CONFIGURACIÓN DEL JOB
 #     Ajusta estos valores según tu experimento.
 # -----------------------------------------------------------------------------
-#SBATCH -J dtrades_cifar100
+#SBATCH -J dtrades
 #SBATCH -p GPU
 #SBATCH --qos=normal-gpu
 #SBATCH -n 1
-#SBATCH -c 20
-#SBATCH --mem=48G
+#SBATCH -c 8
+#SBATCH --mem=50G
 ##SBATCH --time=48:00:00
 
 # -----------------------------------------------------------------------------
@@ -93,7 +93,7 @@ export DATASET="riawelc"
 export MODEL="resnet18"             
 export METHOD="d_trades"
 export BATCH_SIZE="64"
-export EPOCHS=1
+export EPOCHS=100
 export USE_RANDAUGMENT="false"
 
 # Recuperación ante caídas (Resuming)
