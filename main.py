@@ -41,8 +41,10 @@ def main():
     # Default inteligente: RIAWELC usa imágenes 7× más grandes → menos imágenes por batch.
     #   riawelc: 64  (a partir de ahí escalar según VRAM disponible)
     #   resto:  128
-    _default_batch = "64" if dataset_name == "riawelc" else "128"
-    batch_size = int(os.getenv("BATCH_SIZE", _default_batch))
+    _default_batch     = "64" if dataset_name == "riawelc" else "128"
+    batch_size         = int(os.getenv("BATCH_SIZE",  _default_batch))
+    _default_eval_freq = "20" if dataset_name == "riawelc" else "10"
+    eval_freq          = int(os.getenv("EVAL_FREQ",   _default_eval_freq))
 
     data_cfg = DataConfig(
         name            = dataset_name,
@@ -198,7 +200,7 @@ def main():
     # -------------------------------------------------------------------------
     print("\n" + "=" * 60)
     print(f"  Entrenamiento  |  Método: {method_name}  |  {dataset_name}")
-    print(f"  Épocas: {cfg.epochs}  |  batch: {cfg.batch}  |  lr: {cfg.lr}")
+    print(f"  Épocas: {cfg.epochs}  |  batch: {cfg.batch}  |  lr: {cfg.lr}  |  eval_freq: {eval_freq}")
     print(f"  Resultados → {cfg.results_dir}")
     print("=" * 60 + "\n")
 
@@ -215,6 +217,7 @@ def main():
         save_state_fn   = save_state_fn,
         scheduler       = scheduler,
         start_epoch     = start_epoch,
+        eval_freq       = eval_freq,
     )
 
     print("\n[DONE] Entrenamiento finalizado.")

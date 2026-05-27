@@ -74,13 +74,13 @@ def dataset_stats(name: str) -> Tuple[Tuple[float, ...], Tuple[float, ...], int]
     if name == "svhn":
         return (0.4377, 0.4438, 0.4728), (0.1980, 0.2010, 0.1970), 10
     if name == "riawelc":
-        # RIAWELC: 24,407 imágenes radiográficas de soldaduras, 227×227, grayscale.
-        # 4 clases: Difetto1 (LP), Difetto2 (PO), Difetto4 (CR), NoDifetto (ND).
-        # Como las imágenes se convierten a 3 canales (Grayscale→RGB), los 3
-        # canales son idénticos. Valores aproximados para imágenes radiográficas
-        # 8-bit; se recomienda recalcular con compute_dataset_stats() si se
-        # requiere precisión fina.
-        return (0.5, 0.5, 0.5), (0.25, 0.25, 0.25), 4
+        # RIAWELC: 21,964 imágenes de entrenamiento+validación, 224×224, grayscale→3ch.
+        # 4 clases: Difetto1, Difetto2, Difetto4, NoDifetto.
+        # Stats calculadas sobre train+val con Resize(256)+CenterCrop(224)+ToTensor.
+        # Std real (0.0919) es ~3x menor que el placeholder anterior (0.25):
+        # usar el placeholder inflaba el std e introducía gradientes del ataque
+        # ~2.7x más débiles de lo correcto (escala 1/std en la chain rule del PGD).
+        return (0.6011, 0.6011, 0.6011), (0.0919, 0.0919, 0.0919), 4
     raise ValueError(f"Dataset no soportado: {name}")
 
 

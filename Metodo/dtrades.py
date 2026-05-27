@@ -237,8 +237,10 @@ def d_trades_loss(
         sensitivity = g.view(batch_size, -1).norm(p=2, dim=1)   # [B]
 
     sensitivity_log = torch.log1p(sensitivity)
-    # Normalización de sensibilidad: centrada en ~1.0 dividiendo por la media del batch
-    sensitivity_n = sensitivity_log / (sensitivity_log.mean() + EPS)
+    # Tanh z-score: normaliza a (0,1), outliers se comprimen suavemente
+    mu    = sensitivity_log.mean()
+    sigma = sensitivity_log.std() + EPS
+    sensitivity_n = (torch.tanh((sensitivity_log - mu) / sigma) + 1.0) / 2.0
 
     # ---------- Error adversarial local (1 - f(x')_y) [B] ----------
     # Probabilidad de que el modelo falle sobre la muestra adversarial x'.
