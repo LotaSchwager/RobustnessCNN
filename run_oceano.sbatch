@@ -79,23 +79,25 @@ echo "[INFO] CUDA OK : $(python -c 'import torch; print(torch.cuda.is_available(
 echo "[INFO] GPU     : $(python -c 'import torch; print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU")')"
 
 # -----------------------------------------------------------------------------
-# [6] HIPERPARÁMETROS DE EVALUACIÓN (variables de entorno)
-#     El script Python de evaluación lee estas variables para configurar el modelo
-#     y cargar los pesos desde tu CHECKPOINT_PATH.
+# [6] CONFIGURACIÓN DE EVALUACIÓN
+#     Modifica MODEL y CHECKPOINT_PATH para cada experimento.
+#
+#     MODEL:           resnet18 | wideresnet
+#     CHECKPOINT_PATH: ruta absoluta al archivo .pt del modelo entrenado
+#
+#     Ejemplos:
+#       D-TRADES + ResNet18    → MODEL="resnet18"    + ruta al .pt de d_trades
+#       D-TRADES + WideResNet  → MODEL="wideresnet"  + ruta al .pt de d_trades
+#       MART     + ResNet18    → MODEL="resnet18"    + ruta al .pt de mart
+#       MART     + WideResNet  → MODEL="wideresnet"  + ruta al .pt de mart
 # -----------------------------------------------------------------------------
-export DATASET="riawelc"
 export MODEL="resnet18"
-export METHOD="d_trades"
-
-# INGRESA AQUÍ LA RUTA ABSOLUTA AL ARCHIVO .pt DEL MODELO ENTRENADO
-# Ejemplo: /home/ademir.munoz/RobustnessCNN/Resultado/modelo/<run_id>/d_trades_riawelc_resnet18_final.pt
-export CHECKPOINT_PATH="/home/ademir.munoz/RobustnessCNN/Resultado/modelo/"
+export CHECKPOINT_PATH="/home/ademir.munoz/RobustnessCNN/Resultado/modelo/<run_id>/<archivo>.pt"
 
 export PYTHONPATH="$(pwd):$PYTHONPATH"
 
 echo "[INFO] Configuración de la Evaluación:"
-echo "       Método      : $METHOD"
-echo "       Dataset     : $DATASET  |  Modelo: $MODEL"
+echo "       Modelo      : $MODEL"
 echo "       Checkpoint  : $CHECKPOINT_PATH"
 
 # -----------------------------------------------------------------------------

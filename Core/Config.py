@@ -5,7 +5,7 @@ import time
 class Config:
     def __init__(
             self, 
-            dataset="cifar10",
+            dataset="riawelc",
             model="resnet18",
             method="d_trades",
             epochs=100,
@@ -29,9 +29,9 @@ class Config:
         self._momentum = 0.9
         
         if method == "d_trades":
-            self._epsilon   = 8/255 if dataset in ["cifar10", "cifar100"] else 0.3
+            self._epsilon   = 8/255 if dataset in ["cifar10", "cifar100", "riawelc"] else 0.3
             self._num_steps = 10
-            self._step_size = 2/255 if dataset in ["cifar10", "cifar100"] else 0.01
+            self._step_size = 2/255 if dataset in ["cifar10", "cifar100", "riawelc"] else 0.01
             
             # Hiperparámetros del lambda dinámico adaptativo por clase:
             #   alpha_base: peso base de la entropía local H(x).
