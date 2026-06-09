@@ -129,8 +129,8 @@ def make_datasets(cfg: DataConfig):
 
     # 👈 Inyección de RIAWELC usando ImageFolder mapeando tus carpetas reales
     elif cfg.name == "riawelc":
-        train_path = os.path.join(root, "riawelc", "training")
-        test_path  = os.path.join(root, "riawelc", "testing")
+        train_path = os.path.join(root, "RIAWELC", "Dataset_partitioned", "DB - Copy", "training")
+        test_path  = os.path.join(root, "RIAWELC", "Dataset_partitioned", "DB - Copy", "testing")
         
         if not os.path.exists(train_path) or not os.path.exists(test_path):
             raise FileNotFoundError(
