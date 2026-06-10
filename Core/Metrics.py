@@ -73,15 +73,17 @@ class Metrics:
         "loss_natural", "loss_robust",
     ]
 
-    def __init__(self, results_dir: str):
-        self._results_dir = results_dir
+    def __init__(self, results_dir: str, batch_metrics: bool = True):
+        self._results_dir   = results_dir
+        self._batch_metrics = batch_metrics
         os.makedirs(self._results_dir, exist_ok=True)
 
         self._batch_csv = os.path.join(self._results_dir, "batch_metrics.csv")
         self._epoch_csv = os.path.join(self._results_dir, "epoch_metrics.csv")
 
         # Escribir headers si los archivos no existen
-        for path in (self._batch_csv, self._epoch_csv):
+        paths = (self._batch_csv, self._epoch_csv) if batch_metrics else (self._epoch_csv,)
+        for path in paths:
             if not os.path.isfile(path):
                 with open(path, "w", newline="") as f:
                     csv.DictWriter(f, fieldnames=self._FIELDNAMES).writeheader()
@@ -104,7 +106,6 @@ class Metrics:
         batch_idx : índice del batch dentro de la época.
         info      : dict devuelto por dtrades.compute_loss con arrays numpy.
         """
-        # Si cambió la época, resetear acumuladores
         if epoch != self._current_epoch:
             self._epoch_batches = []
             self._current_epoch = epoch
@@ -115,7 +116,8 @@ class Metrics:
         )
 
         self._epoch_batches.append(row)
-        self._write_row(self._batch_csv, row)
+        if self._batch_metrics:
+            self._write_row(self._batch_csv, row)
 
     def record_epoch(self, epoch: int, **extra_kwargs) -> None:
         """

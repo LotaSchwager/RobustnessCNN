@@ -89,16 +89,24 @@ echo "[INFO] GPU     : $(python -c 'import torch; print(torch.cuda.get_device_na
 #     Modifica aquí para cambiar el experimento sin tocar el código Python.
 # -----------------------------------------------------------------------------
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-export DATASET="riawelc"           
-export MODEL="resnet18"             
+export TITLE="experimento"          # prefijo para el nombre de la carpeta en Resultado/modelo/
+export SEED="1"                     # semilla de reproducibilidad (cambia por run: 1, 2, 3...)
+export DATASET="riawelc"
+export MODEL="resnet18"
 export METHOD="d_trades"
 export BATCH_SIZE="64"
 export EPOCHS=100
 export USE_RANDAUGMENT="false"
+export EVAL_FREQ="9999"             # frecuencia de evaluación PGD (9999 = solo al final)
+export PGD_EVAL_STEPS="20"          # pasos del PGD en evaluación (mismo para todos los runs)
+export BATCH_METRICS="false"        # false = no escribe batch_metrics.csv (ahorra I/O)
 
 # Recuperación ante caídas (Resuming)
-# Si tu job fue cancelado por límite de tiempo de SLURM, descomenta la siguiente
-# línea y pon el nombre (fecha) exacto de tu RUN para continuar desde el Temp/:
+# Si tu job fue cancelado, descomenta RUN_ID y pon SOLO la parte de fecha/hora
+# (sin el TITLE). El script construye la ruta como: TITLE_RUN_ID
+# Ejemplo: si la carpeta fue "experimento_20260610-143000", pon:
+#   export TITLE="experimento"
+#   export RUN_ID="20260610-143000"
 # export RUN_ID="YYYYMMDD-HHMMSS"
 
 export PYTHONPATH="$(pwd):$PYTHONPATH"

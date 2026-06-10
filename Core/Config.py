@@ -69,7 +69,10 @@ class Config:
         self._log_interval = 100
         self._run_name     = f"{method}_{dataset}_{model}"
         self._seed         = seed
-        self._run_id       = os.getenv("RUN_ID", time.strftime("%Y%m%d-%H%M%S"))
+        _timestamp = time.strftime("%Y%m%d-%H%M%S")
+        _title     = os.getenv("TITLE", "").strip()
+        _base_id   = os.getenv("RUN_ID", _timestamp)
+        self._run_id = f"{_title}_{_base_id}" if _title else _base_id
 
         self._results_dir = os.path.join(results_dir, self._run_id)
         self._temp_dir    = os.path.join(temp_dir,    self._run_id)

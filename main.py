@@ -68,7 +68,7 @@ def main():
         method      = method_name,
         epochs      = epochs,
         num_classes = num_classes,   # necesario para que el método cree su estado
-        seed        = 1,
+        seed        = int(os.getenv("SEED", "1")),
         cuda        = True,
     )
 
@@ -117,14 +117,15 @@ def main():
     # -------------------------------------------------------------------------
     # 7) Métricas
     # -------------------------------------------------------------------------
-    metrics = Metrics(cfg.results_dir)
+    batch_metrics_enabled = os.getenv("BATCH_METRICS", "true").lower() == "true"
+    metrics = Metrics(cfg.results_dir, batch_metrics=batch_metrics_enabled)
 
-    # Evaluador adversarial: PGD-20 (más fuerte que el PGD-10 del entrenamiento)
+    pgd_eval_steps = int(os.getenv("PGD_EVAL_STEPS", "20"))
     def evaluator_fn(model, device, test_loader):
         return eval_adv_test_whitebox_pgd(
             model, device, test_loader,
             epsilon   = cfg.epsilon,
-            num_steps = 20,
+            num_steps = pgd_eval_steps,
             step_size = cfg.step_size,
         )
 
