@@ -82,21 +82,23 @@ echo "[INFO] GPU     : $(python -c 'import torch; print(torch.cuda.get_device_na
 # [6] CONFIGURACIÓN DE EVALUACIÓN
 #     Modifica MODEL y CHECKPOINT_PATH para cada experimento.
 #
+#     DATASET:         cifar10 | cifar100 | riawelc
 #     MODEL:           resnet18 | wideresnet
 #     CHECKPOINT_PATH: ruta absoluta al archivo .pt del modelo entrenado
 #
 #     Ejemplos:
-#       D-TRADES + ResNet18    → MODEL="resnet18"    + ruta al .pt de d_trades
-#       D-TRADES + WideResNet  → MODEL="wideresnet"  + ruta al .pt de d_trades
-#       MART     + ResNet18    → MODEL="resnet18"    + ruta al .pt de mart
-#       MART     + WideResNet  → MODEL="wideresnet"  + ruta al .pt de mart
+#       CIFAR-10  + D-TRADES + ResNet18   → DATASET="cifar10"  MODEL="resnet18"
+#       CIFAR-100 + D-TRADES + WideResNet → DATASET="cifar100" MODEL="wideresnet"
+#       RIAWELC   + MART     + ResNet18   → DATASET="riawelc"  MODEL="resnet18"
 # -----------------------------------------------------------------------------
-export MODEL="resnet18"
+export DATASET="cifar10"        # cifar10 | cifar100 | riawelc
+export MODEL="resnet18"         # resnet18 | wideresnet
 export CHECKPOINT_PATH="/home/ademir.munoz/RobustnessCNN/Resultado/modelo/<run_id>/<archivo>.pt"
 
 export PYTHONPATH="$(pwd):$PYTHONPATH"
 
 echo "[INFO] Configuración de la Evaluación:"
+echo "       Dataset     : $DATASET"
 echo "       Modelo      : $MODEL"
 echo "       Checkpoint  : $CHECKPOINT_PATH"
 

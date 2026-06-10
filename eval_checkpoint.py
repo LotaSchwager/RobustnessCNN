@@ -30,7 +30,7 @@ def main():
     # -------------------------------------------------------------------------
     # 1) CONFIGURACIÓN DESDE ENTORNO
     # -------------------------------------------------------------------------
-    dataset_name = "riawelc"
+    dataset_name = os.getenv("DATASET", "cifar10").lower()
     model_name   = os.getenv("MODEL", "resnet18").lower()
 
     checkpoint_path = os.getenv("CHECKPOINT_PATH")
@@ -39,7 +39,6 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Hiperparámetros de evaluación (mismos que entrenamiento RIAWELC)
     cfg = types.SimpleNamespace(
         device=device,
         epsilon=8/255,
@@ -64,6 +63,7 @@ def main():
     test_loader = DataLoader(test_ds, batch_size=data_cfg.test_batch_size, shuffle=False, **kwargs)
 
     print("\n========== DEBUG DATASET ==========")
+    print("Dataset      :", dataset_name)
     print("Número de clases:", num_classes)
     print("Clases detectadas:", getattr(test_ds, 'classes', 'No disponibles'))
     print("Cantidad test:", len(test_ds))
@@ -72,21 +72,29 @@ def main():
     # -------------------------------------------------------------------------
     # 3) MODELO
     # -------------------------------------------------------------------------
-    print(f"[INFO] Inicializando arquitectura '{model_name}' para {num_classes} clases...")
+    # CIFAR datasets usan imágenes 32x32; RIAWELC usa 224x224
+    img_size = 32 if dataset_name in ("cifar10", "cifar100") else 224
+    dropout  = 0.3 if img_size > 32 else 0.0
+
+    print(f"[INFO] Inicializando arquitectura '{model_name}' para {num_classes} clases (img_size={img_size})...")
 
     is_wideresnet = "wideresnet" in model_name or model_name.startswith("wrn")
 
     if is_wideresnet:
-        base_model = get_model(model_name, num_classes=num_classes, img_size=224, dropout_rate=0.3)
-        print("[INFO] WideResNet configurado nativamente para 224x224.")
+        base_model = get_model(model_name, num_classes=num_classes, img_size=img_size, dropout_rate=dropout)
+        print(f"[INFO] WideResNet configurado nativamente para {img_size}x{img_size}.")
     else:
         base_model = get_model(model_name, num_classes=num_classes)
-        base_model.conv1 = nn.Conv2d(
-            in_channels=3, out_channels=64, kernel_size=7, stride=2, padding=3, bias=False
-        )
-        base_model.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        base_model.forward = types.MethodType(fixed_forward_resnet, base_model)
-        print("[INFO] ResNet configurada con parche conv1/maxpool para 224x224.")
+        if img_size > 32:
+            # Parche para imágenes grandes: reemplazar stem CIFAR (3x3/stride-1) por stem ImageNet
+            base_model.conv1 = nn.Conv2d(
+                in_channels=3, out_channels=64, kernel_size=7, stride=2, padding=3, bias=False
+            )
+            base_model.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+            base_model.forward = types.MethodType(fixed_forward_resnet, base_model)
+            print(f"[INFO] ResNet configurada con parche conv1/maxpool para {img_size}x{img_size}.")
+        else:
+            print(f"[INFO] ResNet usando stem CIFAR estándar para {img_size}x{img_size}.")
 
     model = nn.Sequential(NormalizeLayer(mean, std), base_model).to(device)
 
