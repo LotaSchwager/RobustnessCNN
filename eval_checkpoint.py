@@ -32,6 +32,7 @@ def main():
     # -------------------------------------------------------------------------
     dataset_name = os.getenv("DATASET", "cifar10").lower()
     model_name   = os.getenv("MODEL", "resnet18").lower()
+    test_batch_size = int(os.getenv("TEST_BATCH_SIZE", "32"))
 
     checkpoint_path = os.getenv("CHECKPOINT_PATH")
     if not checkpoint_path or not os.path.exists(checkpoint_path):
@@ -51,7 +52,7 @@ def main():
     data_cfg = DataConfig(
         name=dataset_name,
         root="./data",
-        test_batch_size=1,
+        test_batch_size=test_batch_size,
         num_workers=4,
         use_cuda=True,
         download=False,
