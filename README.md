@@ -2,14 +2,17 @@
 
 ## Autores
 
-- **Ademir Muñoz** — ademir.munoz.r@mail.pucv.cl
+- **Ademir Muñoz**
 - **Jorge Villareal**
 
 ---
 
 ## Contexto
 
-> _(Completar por los autores: motivación del trabajo, problema abordado, datasets utilizados, resultados relevantes, referencia al informe.)_
+Este repositorio contiene la implementación del método ARES (Adaptive Robustness via Entropy and Sensitivity), desarrollado como parte del proyecto de título de Ingeniería Civil Informática en la Pontificia Universidad Católica de Valparaíso. <br> <br>
+ARES es un método de entrenamiento adversarial que aborda el problema del trade-off entre precisión estándar y robustez adversarial en redes neuronales convolucionales (CNNs). A diferencia de enfoques clásicos como TRADES y MART, que aplican un parámetro de regularización global fijo, ARES reemplaza dicho parámetro por una función dinámica λ(xᵢ) dependiente de cada muestra, construida a partir de la entropía de predicción y la sensibilidad adversarial local, con el fin de concentrar la presión de robustez en las muestras más vulnerables. <br> <br>
+El repositorio permite entrenar y evaluar ARES junto a sus métodos de referencia (TRADES, MART) sobre los datasets CIFAR-10, CIFAR-100 y RIAWELC, utilizando arquitecturas ResNet, VGG y WideResNet. Está diseñado para ejecutarse tanto en entornos locales como en la supercomputadora OCEANO-PUCV mediante SLURM.
+Para mayor detalle sobre la formulación teórica, configuración experimental y resultados obtenidos, referirse al informe final del proyecto.
 
 ---
 
