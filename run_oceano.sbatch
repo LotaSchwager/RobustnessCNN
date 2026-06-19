@@ -24,7 +24,7 @@
 #SBATCH -p GPU
 #SBATCH --qos=normal-gpu
 #SBATCH -n 1
-#SBATCH -c 8
+#SBATCH -c 12
 #SBATCH --mem=50G
 ##SBATCH --time=48:00:00
 
